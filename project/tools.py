@@ -8,6 +8,188 @@ import feedparser
 from datetime import datetime, timedelta
 from typing import Dict, List
 import pandas as pd
+import config
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+
+def normalize_ticker(user_input: str) -> Dict[str, str]:
+    """
+    사용자가 입력한 종목명(한글/영어) 또는 오타를 올바른 종목 코드로 변환합니다.
+    GPT를 사용하여 지능적으로 종목 코드를 추론합니다.
+    
+    Args:
+        user_input: 사용자가 입력한 문자열 (예: "삼성전쟈", "삼성", "Apple", "테슬라")
+    
+    Returns:
+        {"ticker": "005930.KS", "name": "삼성전자", "original": "삼성전쟈"}
+        또는 {"error": "종목을 찾을 수 없습니다."}
+    """
+    # 이미 올바른 종목 코드 형식인지 확인 (예: 005930.KS, AAPL)
+    if _is_valid_ticker_format(user_input.strip().upper()):
+        # 해당 종목이 실제로 존재하는지 확인
+        test_ticker = user_input.strip().upper()
+        try:
+            stock = yf.Ticker(test_ticker)
+            info = stock.info
+            if info and info.get("regularMarketPrice"):
+                return {
+                    "ticker": test_ticker,
+                    "name": info.get("longName", info.get("shortName", test_ticker)),
+                    "original": user_input
+                }
+        except:
+            pass
+    
+    # GPT를 사용하여 종목 코드 추론
+    if not config.OPENAI_API_KEY or config.OPENAI_API_KEY == "your_openai_api_key_here":
+        # API 키가 없으면 기본 매칭만 시도
+        return _basic_ticker_match(user_input)
+    
+    try:
+        llm = ChatOpenAI(
+            model="gpt-5-mini-2025-08-07",
+            temperature=0,
+            api_key=config.OPENAI_API_KEY
+        )
+        
+        # 인기 종목 리스트를 컨텍스트로 제공
+        popular_stocks_text = "\n".join([
+            f"- {stock['name']}: {stock['ticker']}"
+            for stock in config.POPULAR_STOCKS
+        ])
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """당신은 주식 종목 코드 전문가입니다. 
+사용자가 입력한 종목명(한글, 영어, 오타 포함)을 정확한 종목 코드로 변환해주세요.
+
+**규칙:**
+1. 한국 주식은 6자리 숫자 + .KS (코스피) 또는 .KQ (코스닥) 형식입니다.
+2. 미국 주식은 티커 심볼만 사용합니다 (예: AAPL, TSLA)
+3. 오타가 있어도 최대한 유사한 종목을 찾아주세요.
+4. 확실하지 않으면 가장 유명한 종목을 선택하세요.
+
+**응답 형식 (JSON):**
+{{"ticker": "종목코드", "name": "정확한 종목명"}}
+
+**예시:**
+- "삼성전쟈" → {{"ticker": "005930.KS", "name": "삼성전자"}}
+- "삼성" → {{"ticker": "005930.KS", "name": "삼성전자"}}
+- "애플" → {{"ticker": "AAPL", "name": "Apple Inc."}}
+- "테슬라" → {{"ticker": "TSLA", "name": "Tesla, Inc."}}
+- "SK하닉스" → {{"ticker": "000660.KS", "name": "SK하이닉스"}}
+
+**참고 인기 종목:**
+{popular_stocks}"""),
+            ("human", "입력: {user_input}\n\nJSON 형식으로만 응답해주세요.")
+        ])
+        
+        response = llm.invoke(
+            prompt.format_messages(
+                popular_stocks=popular_stocks_text,
+                user_input=user_input
+            )
+        )
+        
+        # JSON 파싱
+        import json
+        import re
+        
+        # JSON 부분만 추출
+        content = response.content.strip()
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            result = json.loads(json_match.group())
+            ticker = result.get("ticker", "").strip().upper()
+            name = result.get("name", "")
+            
+            # 변환된 종목 코드가 실제로 존재하는지 확인
+            if ticker and _verify_ticker_exists(ticker):
+                return {
+                    "ticker": ticker,
+                    "name": name,
+                    "original": user_input
+                }
+        
+        # GPT 응답을 파싱할 수 없는 경우 기본 매칭 시도
+        return _basic_ticker_match(user_input)
+        
+    except Exception as e:
+        print(f"GPT 종목 코드 변환 오류: {str(e)}")
+        return _basic_ticker_match(user_input)
+
+
+def _is_valid_ticker_format(ticker: str) -> bool:
+    """종목 코드 형식이 유효한지 확인"""
+    import re
+    # 한국 주식: 6자리.KS 또는 6자리.KQ
+    # 미국 주식: 1-5자리 알파벳
+    korean_pattern = r'^\d{6}\.(KS|KQ)$'
+    us_pattern = r'^[A-Z]{1,5}$'
+    
+    return bool(re.match(korean_pattern, ticker) or re.match(us_pattern, ticker))
+
+
+def _verify_ticker_exists(ticker: str) -> bool:
+    """종목 코드가 실제로 존재하는지 확인"""
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        # regularMarketPrice나 다른 가격 정보가 있으면 유효한 종목
+        return bool(info and (
+            info.get("regularMarketPrice") or 
+            info.get("currentPrice") or 
+            info.get("previousClose")
+        ))
+    except:
+        return False
+
+
+def _basic_ticker_match(user_input: str) -> Dict[str, str]:
+    """기본 종목명 매칭 (API 키 없을 때 사용)"""
+    user_input_lower = user_input.lower().strip()
+    
+    # 인기 종목에서 검색
+    for stock in config.POPULAR_STOCKS:
+        stock_name_lower = stock['name'].lower()
+        ticker = stock['ticker']
+        
+        # 완전 일치 또는 부분 일치
+        if user_input_lower in stock_name_lower or stock_name_lower in user_input_lower:
+            return {
+                "ticker": ticker,
+                "name": stock['name'],
+                "original": user_input
+            }
+    
+    # 일반적인 영어 종목명 매칭
+    common_stocks = {
+        "apple": "AAPL",
+        "애플": "AAPL",
+        "tesla": "TSLA",
+        "테슬라": "TSLA",
+        "microsoft": "MSFT",
+        "마이크로소프트": "MSFT",
+        "amazon": "AMZN",
+        "아마존": "AMZN",
+        "google": "GOOGL",
+        "구글": "GOOGL",
+        "nvidia": "NVDA",
+        "엔비디아": "NVDA",
+    }
+    
+    for key, ticker in common_stocks.items():
+        if key in user_input_lower:
+            if _verify_ticker_exists(ticker):
+                stock = yf.Ticker(ticker)
+                name = stock.info.get("longName", ticker)
+                return {
+                    "ticker": ticker,
+                    "name": name,
+                    "original": user_input
+                }
+    
+    return {"error": f"'{user_input}'에 해당하는 종목을 찾을 수 없습니다. 정확한 종목 코드를 입력해주세요."}
 
 
 def get_stock_summary(ticker: str, period: str = "1mo") -> Dict:

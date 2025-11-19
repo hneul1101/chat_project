@@ -9,7 +9,7 @@ from datetime import datetime
 import pandas as pd
 import config
 from workflow import analyze_stock
-from tools import get_stock_summary, get_portfolio_analysis
+from tools import get_stock_summary, get_portfolio_analysis, normalize_ticker
 import yfinance as yf
 
 
@@ -333,37 +333,61 @@ def main():
         # 분석 실행
         if analyze_button:
             if ticker_input:
-                with st.spinner("분석 중입니다... 잠시만 기다려주세요."):
-                    result = analyze_stock(
-                        ticker=ticker_input,
-                        period=period,
-                        user_profile=st.session_state.user_profile
-                    )
+                with st.spinner("종목 코드 확인 중..."):
+                    # 사용자 입력을 종목 코드로 변환
+                    normalized = normalize_ticker(ticker_input)
                     
-                    # 결과 표시
-                    display_analysis_result(result, result_key="current_analysis")
-                    
-                    # 히스토리에 추가
-                    if not result.get("error"):
-                        st.session_state.analysis_history.insert(0, {
-                            "timestamp": datetime.now(),
-                            "result": result
-                        })
+                    if "error" in normalized:
+                        st.error(f"❌ {normalized['error']}")
+                    else:
+                        # 변환된 종목 정보 표시
+                        if normalized['original'] != normalized['ticker']:
+                            st.success(f"✅ '{normalized['original']}' → **{normalized['name']}** ({normalized['ticker']})")
+                        
+                        with st.spinner("분석 중입니다... 잠시만 기다려주세요."):
+                            result = analyze_stock(
+                                ticker=normalized['ticker'],
+                                period=period,
+                                user_profile=st.session_state.user_profile
+                            )
+                            
+                            # 결과 표시
+                            display_analysis_result(result, result_key="current_analysis")
+                            
+                            # 히스토리에 추가
+                            if not result.get("error"):
+                                st.session_state.analysis_history.insert(0, {
+                                    "timestamp": datetime.now(),
+                                    "result": result
+                                })
             else:
                 st.warning("종목 코드를 입력해주세요.")
         
         # 종목 코드 가이드
         with st.expander("📘 종목 코드 입력 가이드"):
             st.markdown("""
-            **한국 주식**: 종목코드 + `.KS` 또는 `.KQ`
-            - 예) 삼성전자: `005930.KS`
-            - 예) 카카오: `035720.KS`
+            **🎯 이제 더 쉽게 입력할 수 있습니다!**
             
-            **미국 주식**: 티커 심볼
-            - 예) Apple: `AAPL`
-            - 예) Tesla: `TSLA`
+            **한글 종목명 입력 가능:**
+            - 예) `삼성전자`, `SK하이닉스`, `카카오`
+            - 오타도 괜찮아요: `삼성전쟈`, `SK하닉스`
             
-            **💡 팁**: 사이드바의 인기 종목을 클릭하면 자동으로 입력됩니다.
+            **영어 종목명 입력 가능:**
+            - 예) `Apple`, `Tesla`, `Microsoft`
+            - 한글도 가능: `애플`, `테슬라`
+            
+            **정확한 종목 코드:**
+            - 한국 주식: 종목코드 + `.KS` 또는 `.KQ`
+              - 예) 삼성전자: `005930.KS`
+              - 예) 카카오: `035720.KS`
+            
+            - 미국 주식: 티커 심볼
+              - 예) Apple: `AAPL`
+              - 예) Tesla: `TSLA`
+            
+            **💡 팁**: 
+            - 사이드바의 인기 종목을 클릭하면 자동으로 입력됩니다.
+            - AI가 자동으로 올바른 종목 코드를 찾아줍니다!
             """)
     
     # 탭 2: 포트폴리오
@@ -373,19 +397,26 @@ def main():
         col1, col2 = st.columns([2, 1])
         
         with col1:
-            new_ticker = st.text_input("종목 추가", placeholder="종목 코드 입력")
+            new_ticker = st.text_input("종목 추가", placeholder="종목명 또는 코드 입력 (예: 삼성전자, AAPL)")
         
         with col2:
             new_shares = st.number_input("보유 수량", min_value=1, value=1)
         
         if st.button("➕ 포트폴리오에 추가"):
             if new_ticker:
-                st.session_state.portfolio.append({
-                    "ticker": new_ticker,
-                    "shares": new_shares
-                })
-                st.success(f"{new_ticker} 종목이 포트폴리오에 추가되었습니다!")
-                st.rerun()
+                with st.spinner("종목 확인 중..."):
+                    # 사용자 입력을 종목 코드로 변환
+                    normalized = normalize_ticker(new_ticker)
+                    
+                    if "error" in normalized:
+                        st.error(f"❌ {normalized['error']}")
+                    else:
+                        st.session_state.portfolio.append({
+                            "ticker": normalized['ticker'],
+                            "shares": new_shares
+                        })
+                        st.success(f"✅ **{normalized['name']}** ({normalized['ticker']}) 종목이 포트폴리오에 추가되었습니다!")
+                        st.rerun()
         
         if st.session_state.portfolio:
             st.markdown("### 보유 종목")
