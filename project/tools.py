@@ -420,3 +420,150 @@ def get_portfolio_analysis(portfolio: List[Dict]) -> Dict:
         "high_risk_count": len(high_risk_stocks),
         "high_risk_stocks": high_risk_stocks
     }
+
+
+def chat_with_ai(user_message: str, chat_history: List[Dict] = None, user_profile: str = "moderate") -> str:
+    """
+    사용자와 AI 챗봇 간의 대화를 처리합니다.
+    투자 관련 질문에 답변하고, 필요시 종목 분석도 수행합니다.
+    
+    Args:
+        user_message: 사용자의 메시지
+        chat_history: 이전 대화 내역 [{"role": "user", "content": "..."}, ...]
+        user_profile: 사용자의 투자 성향
+    
+    Returns:
+        AI의 응답 메시지
+    """
+    if not config.OPENAI_API_KEY or config.OPENAI_API_KEY == "your_openai_api_key_here":
+        return "⚠️ OpenAI API 키가 설정되지 않았습니다. .env 파일에 API 키를 설정해주세요."
+    
+    try:
+        from langchain_openai import ChatOpenAI
+        from langchain_core.prompts import ChatPromptTemplate
+        from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+        
+        llm = ChatOpenAI(
+            model="gpt-5-nano-2025-08-07",
+            api_key=config.OPENAI_API_KEY
+        )
+        
+        # 투자 성향 정보
+        profile_info = config.INVESTMENT_PROFILES.get(user_profile, config.INVESTMENT_PROFILES["moderate"])
+        
+        # 시스템 프롬프트
+        system_message = f"""당신은 FinGenie, 전문적인 AI 투자 어드바이저입니다.
+
+**당신의 역할:**
+- 친절하고 전문적으로 투자 관련 질문에 답변합니다
+- 종목 분석, 시장 동향, 투자 전략 등에 대해 조언합니다
+- 사용자의 투자 성향을 고려하여 맞춤형 조언을 제공합니다
+- 복잡한 금융 개념을 쉽게 설명합니다
+
+**사용자 투자 성향:**
+- 유형: {profile_info['name']}
+- 설명: {profile_info['description']}
+- 위험 허용도: {profile_info['risk_tolerance']}
+
+**답변 가이드라인:**
+1. 명확하고 구체적으로 답변하세요
+2. 필요시 예시를 들어 설명하세요
+3. 위험성도 함께 언급하세요
+4. 한국 시장과 미국 시장 모두 다룰 수 있습니다
+5. 투자 결정은 최종적으로 사용자의 책임임을 상기시키세요
+
+**주요 기능:**
+- 종목명이나 코드를 언급하면 실시간 정보를 조회할 수 있습니다
+- 포트폴리오 구성, 위험 관리, 투자 전략 등에 대해 조언할 수 있습니다
+- 시장 뉴스나 트렌드에 대해 설명할 수 있습니다
+
+답변은 친근하면서도 전문적인 톤으로 작성하세요. 이모지를 적절히 사용하여 가독성을 높이세요."""
+        
+        # 메시지 구성
+        messages = [SystemMessage(content=system_message)]
+        
+        # 이전 대화 내역 추가
+        if chat_history:
+            for msg in chat_history[-10:]:  # 최근 10개만 유지
+                if msg["role"] == "user":
+                    messages.append(HumanMessage(content=msg["content"]))
+                elif msg["role"] == "assistant":
+                    messages.append(AIMessage(content=msg["content"]))
+        
+        # 현재 사용자 메시지 추가
+        messages.append(HumanMessage(content=user_message))
+        
+        # AI 응답 생성
+        response = llm.invoke(messages)
+        return response.content
+        
+    except Exception as e:
+        return f"❌ 오류가 발생했습니다: {str(e)}\n\n다시 시도해주세요."
+
+
+def analyze_stock_for_chat(ticker_or_name: str) -> str:
+    """
+    채팅에서 종목 분석을 요청할 때 사용하는 간단한 분석 함수
+    
+    Args:
+        ticker_or_name: 종목 코드 또는 이름
+    
+    Returns:
+        분석 결과 텍스트
+    """
+    try:
+        # 종목 코드 정규화
+        normalized = normalize_ticker(ticker_or_name)
+        
+        if "error" in normalized:
+            return f"❌ {normalized['error']}"
+        
+        ticker = normalized['ticker']
+        name = normalized['name']
+        
+        # 주가 정보 가져오기
+        stock_data = get_stock_summary(ticker, period="1mo")
+        
+        if "error" in stock_data:
+            return f"❌ {stock_data['error']}"
+        
+        # 뉴스 및 감성 분석
+        news_data = get_stock_news(name, max_results=3)
+        sentiment_data = get_sentiment_analysis(news_data)
+        risk_data = calculate_risk_score(stock_data, sentiment_data)
+        
+        # 결과 포맷팅
+        result = f"""
+📊 **{name}** ({ticker}) 분석 결과
+
+**현재 주가 정보:**
+- 현재가: ₩{stock_data['current_price']:,}
+- 변동률: {stock_data['price_change_percent']:+.2f}%
+- 최고가: ₩{stock_data['high']:,}
+- 최저가: ₩{stock_data['low']:,}
+
+**시장 감성:**
+- 감성: {sentiment_data['sentiment']}
+- 감성 점수: {sentiment_data['score']}/100
+- 긍정 뉴스: {sentiment_data['positive_count']}개
+- 부정 뉴스: {sentiment_data['negative_count']}개
+
+**위험도 평가:**
+- 위험 수준: {risk_data['color']} {risk_data['risk_level']}
+- 위험 점수: {risk_data['risk_score']}/100
+"""
+        
+        if risk_data['risk_factors']:
+            result += f"- 위험 요인: {', '.join(risk_data['risk_factors'])}\n"
+        
+        # 최근 뉴스 추가
+        result += "\n**최근 뉴스:**\n"
+        for i, news in enumerate(news_data[:3], 1):
+            if "error" not in news:
+                result += f"{i}. {news['title']}\n"
+        
+        return result
+        
+    except Exception as e:
+        return f"❌ 분석 중 오류가 발생했습니다: {str(e)}"
+

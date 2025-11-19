@@ -9,7 +9,14 @@ from datetime import datetime
 import pandas as pd
 import config
 from workflow import analyze_stock
-from tools import get_stock_summary, get_portfolio_analysis, normalize_ticker
+from tools import (
+    get_stock_summary, 
+    get_portfolio_analysis, 
+    normalize_ticker,
+    chat_with_ai,
+    analyze_stock_for_chat
+)
+from tools_agent import chat_with_tools_streaming
 import yfinance as yf
 
 
@@ -82,6 +89,173 @@ def initialize_session_state():
         st.session_state.user_profile = 'moderate'
     if 'portfolio' not in st.session_state:
         st.session_state.portfolio = []
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
+    if 'chat_messages' not in st.session_state:
+        st.session_state.chat_messages = []
+    if 'show_chat' not in st.session_state:
+        st.session_state.show_chat = False
+
+
+def render_chat_page():
+    """독립된 AI 챗봇 페이지"""
+    # 페이지 설정
+    st.markdown('<div class="main-header">💬 FinGenie AI 챗봇</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">AI와 대화하며 투자 조언을 받아보세요</div>', unsafe_allow_html=True)
+    
+    # 사이드바
+    with st.sidebar:
+        # st.image("https://via.placeholder.com/300x100/667eea/ffffff?text=FinGenie", use_container_width=True)
+        
+        # 뒤로 가기 버튼
+        if st.button("← 메인으로 돌아가기", use_container_width=True):
+            st.session_state.show_chat = False
+            st.rerun()
+        
+        st.markdown("---")
+        
+        # 투자 성향 표시
+        profile_info = config.INVESTMENT_PROFILES[st.session_state.user_profile]
+        st.markdown("## ⚙️ 현재 설정")
+        st.info(f"**투자 성향: {profile_info['name']}**\n\n{profile_info['description']}")
+        
+        st.markdown("---")
+        
+        # 대화 통계
+        st.markdown("## 📊 대화 통계")
+        st.metric("전체 메시지", len(st.session_state.chat_messages))
+        st.metric("대화 기록", len(st.session_state.chat_history))
+        
+        st.markdown("---")
+        
+        # 대화 초기화
+        if st.button("🗑️ 대화 기록 삭제", use_container_width=True):
+            st.session_state.chat_messages = []
+            st.session_state.chat_history = []
+            st.rerun()
+        
+        st.markdown("---")
+        
+        # API 상태
+        if config.OPENAI_API_KEY and config.OPENAI_API_KEY != "your_openai_api_key_here":
+            st.success("✅ OpenAI API 연결됨")
+        else:
+            st.error("❌ OpenAI API 키 필요")
+    
+    # API 키 확인
+    if not config.OPENAI_API_KEY or config.OPENAI_API_KEY == "your_openai_api_key_here":
+        st.error("⚠️ OpenAI API 키가 설정되지 않았습니다.")
+        st.info("`.env` 파일에 다음과 같이 API 키를 설정해주세요:\n\n```\nOPENAI_API_KEY=sk-your-api-key-here\n```")
+        return
+    
+    # 환영 메시지
+    if not st.session_state.chat_messages:
+        with st.chat_message("assistant"):
+            st.markdown("""
+            안녕하세요! 저는 **FinGenie AI 투자 어드바이저**입니다. 🧞✨
+            
+            **제가 도와드릴 수 있는 것들:**
+            - 📊 특정 종목 분석 및 투자 조언
+            - 💼 포트폴리오 구성 및 관리 전략
+            - 📈 시장 동향 및 트렌드 분석
+            - 🎯 투자 전략 및 리스크 관리
+            - 💡 투자 관련 용어 및 개념 설명
+            
+            무엇을 도와드릴까요? 😊
+            """)
+    
+    # 이전 메시지들 표시
+    for message in st.session_state.chat_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+    
+    # 예시 질문 버튼들 (메시지가 없을 때만 표시)
+    if len(st.session_state.chat_messages) == 0:
+        st.markdown("### 💡 예시 질문을 클릭해보세요")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("📊 삼성전자 분석해줘", use_container_width=True):
+                st.session_state.pending_input = "삼성전자 종목을 분석해주고 지금 매수하기 좋은지 투자 의견을 알려줘"
+                st.rerun()
+        
+        with col2:
+            if st.button("💼 포트폴리오 구성법", use_container_width=True):
+                st.session_state.pending_input = "초보 투자자를 위한 안전한 포트폴리오 구성 방법을 알려줘"
+                st.rerun()
+        
+        with col3:
+            if st.button("🎯 장기 투자 전략", use_container_width=True):
+                st.session_state.pending_input = "안정적인 장기 투자 전략에 대해 자세히 알려줘"
+                st.rerun()
+    
+    # 채팅 입력 (하단 고정)
+    user_input = st.chat_input("메시지를 입력하세요...", key="chat_input_main")
+    
+    # 예시 버튼으로부터 입력받은 경우
+    if 'pending_input' in st.session_state:
+        user_input = st.session_state.pending_input
+        del st.session_state.pending_input
+    
+    if user_input:
+        # 사용자 메시지 추가 및 표시
+        st.session_state.chat_messages.append({
+            "role": "user",
+            "content": user_input
+        })
+        st.session_state.chat_history.append({
+            "role": "user",
+            "content": user_input
+        })
+        
+        with st.chat_message("user"):
+            st.markdown(user_input)
+        
+        # AI 응답 생성 (스트리밍)
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()
+            full_response = ""
+            used_tools_list = []
+            
+            try:
+                # 도구를 사용하는 AI 호출
+                response_generator, used_tools = chat_with_tools_streaming(
+                    user_input,
+                    st.session_state.chat_history[:-1],
+                    st.session_state.user_profile
+                )
+                
+                # 사용된 도구 정보 저장
+                used_tools_list = used_tools
+                
+                # 사용된 도구 표시 (채팅 완료 후에도 유지)
+                if used_tools_list:
+                    tool_names = {
+                        "get_stock_analysis": "📊 실시간 종목 분석"
+                    }
+                    tool_display = " • ".join([tool_names.get(t, t) for t in used_tools_list])
+                    st.info(f"🔧 사용된 도구: {tool_display}")
+                
+                # 스트리밍 응답 생성
+                for chunk in response_generator:
+                    full_response += chunk
+                    message_placeholder.markdown(full_response + "▌")
+                
+                message_placeholder.markdown(full_response)
+                
+            except Exception as e:
+                full_response = f"❌ 오류가 발생했습니다: {str(e)}\n\n다시 시도해주세요."
+                message_placeholder.markdown(full_response)
+            
+            # AI 응답 저장
+            st.session_state.chat_messages.append({
+                "role": "assistant",
+                "content": full_response
+            })
+            st.session_state.chat_history.append({
+                "role": "assistant",
+                "content": full_response
+            })
 
 
 def plot_stock_chart(ticker: str, period: str = "1mo", chart_key: str = "main"):
@@ -262,13 +436,18 @@ def main():
     """메인 애플리케이션"""
     initialize_session_state()
     
+    # 채팅 모드인 경우 채팅 화면만 표시
+    if st.session_state.show_chat:
+        render_chat_page()
+        return
+    
     # 헤더
     st.markdown('<div class="main-header">🧞 FinGenie</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">AI 기반 개인 맞춤형 투자 분석 비서</div>', unsafe_allow_html=True)
     
     # 사이드바
     with st.sidebar:
-        st.image("https://via.placeholder.com/300x100/667eea/ffffff?text=FinGenie", use_container_width=True)
+        # st.image("https://via.placeholder.com/300x100/667eea/ffffff?text=FinGenie", use_container_width=True)
         
         st.markdown("## ⚙️ 설정")
         
@@ -284,6 +463,16 @@ def main():
         
         profile_info = config.INVESTMENT_PROFILES[selected_profile]
         st.info(f"**{profile_info['name']}**\n\n{profile_info['description']}\n\n위험 허용도: {profile_info['risk_tolerance']}")
+        
+        st.markdown("---")
+        
+        # AI 챗봇 버튼
+        st.markdown("## 💬 AI 어드바이저")
+        if st.button("🤖 AI 챗봇과 대화하기", use_container_width=True, type="primary"):
+            st.session_state.show_chat = True
+            st.rerun()
+        
+        st.caption("AI와 대화하며 투자 조언을 받아보세요!")
         
         st.markdown("---")
         
