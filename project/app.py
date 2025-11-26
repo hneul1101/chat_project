@@ -3,22 +3,27 @@ FinGenie - AI Investment Advisor Chatbot
 Streamlit Dashboard Application
 """
 import streamlit as st
-import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime
 import pandas as pd
 import config
 from workflow import analyze_stock
+from utils import generate_pdf_report
+from database import DBManager
 from tools import (
     get_stock_summary, 
     get_portfolio_analysis, 
     normalize_ticker,
     chat_with_ai,
-    analyze_stock_for_chat
+    analyze_stock_for_chat,
+    get_stock_news
 )
 from tools_agent import chat_with_tools_streaming
 import yfinance as yf
 
+# DB Manager 초기화
+if 'db' not in st.session_state:
+    st.session_state.db = DBManager()
 
 # 페이지 설정
 st.set_page_config(
@@ -83,6 +88,8 @@ st.markdown("""
 
 def initialize_session_state():
     """세션 상태 초기화"""
+    if 'user' not in st.session_state:
+        st.session_state.user = None
     if 'analysis_history' not in st.session_state:
         st.session_state.analysis_history = []
     if 'user_profile' not in st.session_state:
@@ -96,19 +103,62 @@ def initialize_session_state():
     if 'show_chat' not in st.session_state:
         st.session_state.show_chat = False
 
+def login_page():
+    """로그인/회원가입 페이지"""
+    st.markdown('<div class="main-header">🧞 FinGenie</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">로그인이 필요합니다</div>', unsafe_allow_html=True)
+    
+    tab1, tab2 = st.tabs(["로그인", "회원가입"])
+    
+    with tab1:
+        with st.form("login_form"):
+            username = st.text_input("사용자명")
+            password = st.text_input("비밀번호", type="password")
+            submit = st.form_submit_button("로그인", use_container_width=True)
+            
+            if submit:
+                user = st.session_state.db.login_user(username, password)
+                if user:
+                    st.session_state.user = user
+                    st.session_state.user_profile = user.settings.get('profile', 'moderate')
+                    # Load data from DB
+                    st.session_state.portfolio = st.session_state.db.get_portfolio(user.id)
+                    st.success("로그인 성공!")
+                    st.rerun()
+                else:
+                    st.error("사용자명 또는 비밀번호가 잘못되었습니다.")
+    
+    with tab2:
+        with st.form("signup_form"):
+            new_username = st.text_input("사용자명")
+            new_password = st.text_input("비밀번호", type="password")
+            confirm_password = st.text_input("비밀번호 확인", type="password")
+            profile = st.selectbox("투자 성향", options=list(config.INVESTMENT_PROFILES.keys()))
+            submit = st.form_submit_button("회원가입", use_container_width=True)
+            
+            if submit:
+                if new_password != confirm_password:
+                    st.error("비밀번호가 일치하지 않습니다.")
+                elif len(new_password) < 4:
+                    st.error("비밀번호는 4자 이상이어야 합니다.")
+                else:
+                    user, error = st.session_state.db.create_user(new_username, new_password, profile)
+                    if error:
+                        st.error(f"회원가입 실패: {error}")
+                    else:
+                        st.success("회원가입이 완료되었습니다! 로그인해주세요.")
 
 def render_chat_page():
     """독립된 AI 챗봇 페이지"""
     # 페이지 설정
     st.markdown('<div class="main-header">💬 FinGenie AI 챗봇</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">AI와 대화하며 투자 조언을 받아보세요</div>', unsafe_allow_html=True)
-    
-    # 사이드바
+
     with st.sidebar:
-        # st.image("https://via.placeholder.com/300x100/667eea/ffffff?text=FinGenie", use_container_width=True)
+        # st.image("https://via.placeholder.com/300x100/667eea/ffffff?text=FinGenie", width='stretch')
         
         # 뒤로 가기 버튼
-        if st.button("← 메인으로 돌아가기", use_container_width=True):
+        if st.button("← 메인으로 돌아가기", width='stretch'):
             st.session_state.show_chat = False
             st.rerun()
         
@@ -129,10 +179,37 @@ def render_chat_page():
         st.markdown("---")
         
         # 대화 초기화
-        if st.button("🗑️ 대화 기록 삭제", use_container_width=True):
+        if st.button("🗑️ 대화 기록 삭제", width='stretch'):
             st.session_state.chat_messages = []
             st.session_state.chat_history = []
             st.rerun()
+        
+        st.markdown("---")
+
+        # 투자 일기 내보내기 (PDF)
+        st.markdown("## 📥 투자 일기")
+        if st.button("📄 PDF로 내보내기", width='stretch'):
+            if not st.session_state.chat_history:
+                st.warning("내보낼 대화 기록이 없습니다.")
+            else:
+                with st.spinner("PDF 생성 중... (폰트 다운로드로 인해 시간이 걸릴 수 있습니다)"):
+                    pdf_file, error = generate_pdf_report(
+                        st.session_state.chat_history,
+                        st.session_state.user_profile
+                    )
+                    
+                    if error:
+                        st.error(f"❌ {error}")
+                    else:
+                        with open(pdf_file, "rb") as f:
+                            st.download_button(
+                                label="⬇️ PDF 다운로드",
+                                data=f,
+                                file_name=pdf_file,
+                                mime="application/pdf",
+                                width='stretch'
+                            )
+                        st.success("✅ PDF가 생성되었습니다!")
         
         st.markdown("---")
         
@@ -175,87 +252,82 @@ def render_chat_page():
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("📊 삼성전자 분석해줘", use_container_width=True):
+            if st.button("📊 삼성전자 분석해줘", width='stretch'):
                 st.session_state.pending_input = "삼성전자 종목을 분석해주고 지금 매수하기 좋은지 투자 의견을 알려줘"
                 st.rerun()
         
         with col2:
-            if st.button("💼 포트폴리오 구성법", use_container_width=True):
+            if st.button("💼 포트폴리오 구성법", width='stretch'):
                 st.session_state.pending_input = "초보 투자자를 위한 안전한 포트폴리오 구성 방법을 알려줘"
                 st.rerun()
         
         with col3:
-            if st.button("🎯 장기 투자 전략", use_container_width=True):
+            if st.button("🎯 장기 투자 전략", width='stretch'):
                 st.session_state.pending_input = "안정적인 장기 투자 전략에 대해 자세히 알려줘"
                 st.rerun()
     
     # 채팅 입력 (하단 고정)
-    user_input = st.chat_input("메시지를 입력하세요...", key="chat_input_main")
-    
-    # 예시 버튼으로부터 입력받은 경우
-    if 'pending_input' in st.session_state:
-        user_input = st.session_state.pending_input
-        del st.session_state.pending_input
-    
-    if user_input:
-        # 사용자 메시지 추가 및 표시
-        st.session_state.chat_messages.append({
-            "role": "user",
-            "content": user_input
-        })
-        st.session_state.chat_history.append({
-            "role": "user",
-            "content": user_input
-        })
+    if prompt := st.chat_input("메시지를 입력하세요...", key="chat_input_main"):
+        # 사용자 메시지 처리
+        st.session_state.chat_messages.append({"role": "user", "content": prompt})
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
         
         with st.chat_message("user"):
-            st.markdown(user_input)
-        
-        # AI 응답 생성 (스트리밍)
+            st.markdown(prompt)
+            
+        # AI 응답 처리
         with st.chat_message("assistant"):
+            # 빈 컨테이너로 시작 (깜빡임 방지)
             message_placeholder = st.empty()
             full_response = ""
-            used_tools_list = []
             
             try:
-                # 도구를 사용하는 AI 호출
-                response_generator, used_tools = chat_with_tools_streaming(
-                    user_input,
-                    st.session_state.chat_history[:-1],
-                    st.session_state.user_profile
-                )
+                with st.spinner("분석 중..."):
+                    # 도구를 사용하는 AI 호출
+                    response_generator, used_tools = chat_with_tools_streaming(
+                        prompt,
+                        st.session_state.chat_history[:-1],
+                        st.session_state.user_profile
+                    )
                 
-                # 사용된 도구 정보 저장
-                used_tools_list = used_tools
-                
-                # 사용된 도구 표시 (채팅 완료 후에도 유지)
-                if used_tools_list:
+                # 사용된 도구 표시 (Expander로 깔끔하게)
+                if used_tools:
                     tool_names = {
-                        "get_stock_analysis": "📊 실시간 종목 분석"
+                        "get_stock_analysis": "📊 실시간 종목 분석",
+                        "get_stock_news": "📰 뉴스 검색",
+                        "get_market_status": "� 시장 현황"
                     }
-                    tool_display = " • ".join([tool_names.get(t, t) for t in used_tools_list])
-                    st.info(f"🔧 사용된 도구: {tool_display}")
-                
-                # 스트리밍 응답 생성
+                    tool_display = " • ".join([tool_names.get(t, t) for t in used_tools])
+                    with st.expander(f"🔧 사용된 도구: {tool_display}"):
+                        st.json(used_tools)
+
+                # 스트리밍 응답
                 for chunk in response_generator:
                     full_response += chunk
                     message_placeholder.markdown(full_response + "▌")
                 
+                # 최종 응답 표시 (커서 제거)
                 message_placeholder.markdown(full_response)
                 
+                # 응답 저장
+                st.session_state.chat_messages.append({"role": "assistant", "content": full_response})
+                st.session_state.chat_history.append({"role": "assistant", "content": full_response})
+                
             except Exception as e:
-                full_response = f"❌ 오류가 발생했습니다: {str(e)}\n\n다시 시도해주세요."
-                message_placeholder.markdown(full_response)
-            
-            # AI 응답 저장
-            st.session_state.chat_messages.append({
-                "role": "assistant",
-                "content": full_response
-            })
-            st.session_state.chat_history.append({
-                "role": "assistant",
-                "content": full_response
-            })
+                error_msg = f"❌ 오류가 발생했습니다: {str(e)}"
+                message_placeholder.error(error_msg)
+                st.session_state.chat_messages.append({"role": "assistant", "content": error_msg})
+
+    # 예시 버튼 처리 (pending_input)
+    if 'pending_input' in st.session_state and st.session_state.pending_input:
+        prompt = st.session_state.pending_input
+        del st.session_state.pending_input
+        
+        # 사용자 메시지 추가
+        st.session_state.chat_messages.append({"role": "user", "content": prompt})
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
+        
+        st.rerun()
 
 
 def plot_stock_chart(ticker: str, period: str = "1mo", chart_key: str = "main"):
@@ -302,7 +374,7 @@ def plot_stock_chart(ticker: str, period: str = "1mo", chart_key: str = "main"):
             hovermode='x unified'
         )
         
-        st.plotly_chart(fig, use_container_width=True, key=f"chart_{ticker}_{period}_{chart_key}")
+        st.plotly_chart(fig, width='stretch', key=f"chart_{ticker}_{period}_{chart_key}")
         
     except Exception as e:
         st.error(f"차트 생성 중 오류 발생: {str(e)}")
@@ -317,6 +389,12 @@ def display_analysis_result(result, result_key="main"):
     # 기본 정보
     st.markdown(f"## 📊 {result['stock_name']} ({result['ticker']})")
     
+    # 통화 기호 결정
+    currency_symbol = "₩"
+    ticker = result['ticker']
+    if not (ticker.endswith(".KS") or ticker.endswith(".KQ")):
+        currency_symbol = "$"
+
     # 메트릭 카드
     col1, col2, col3, col4 = st.columns(4)
     
@@ -324,20 +402,20 @@ def display_analysis_result(result, result_key="main"):
     with col1:
         st.metric(
             label="현재가",
-            value=f"₩{stock_data['current_price']:,.2f}",
+            value=f"{currency_symbol}{stock_data['current_price']:,.2f}",
             delta=f"{stock_data['price_change_percent']:.2f}%"
         )
     
     with col2:
         st.metric(
             label="기간 최고가",
-            value=f"₩{stock_data['high']:,.2f}"
+            value=f"{currency_symbol}{stock_data['high']:,.2f}"
         )
     
     with col3:
         st.metric(
             label="기간 최저가",
-            value=f"₩{stock_data['low']:,.2f}"
+            value=f"{currency_symbol}{stock_data['low']:,.2f}"
         )
     
     with col4:
@@ -349,6 +427,46 @@ def display_analysis_result(result, result_key="main"):
     # 차트
     st.markdown("### 📈 주가 차트")
     plot_stock_chart(result['ticker'], result['period'], chart_key=result_key)
+    
+    # 기술적/기본적 분석 탭
+    tab1, tab2, tab3 = st.tabs(["📊 기술적 분석", "🏢 기본적 분석", "👥 경쟁사 비교"])
+    
+    with tab1:
+        tech = result.get('technical_indicators', {})
+        if tech:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("RSI (14)", tech.get('rsi', 'N/A'))
+            with col2:
+                st.metric("MACD", tech.get('macd', 'N/A'), delta=tech.get('macd_signal', 'N/A'))
+            with col3:
+                st.metric("볼린저 상단", tech.get('bb_upper', 'N/A'))
+                st.metric("볼린저 하단", tech.get('bb_lower', 'N/A'))
+        else:
+            st.info("기술적 분석 데이터가 없습니다.")
+
+    with tab2:
+        fund = result.get('fundamental_data', {})
+        if fund:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("PER", fund.get('per', 'N/A'))
+                st.metric("부채비율", fund.get('debt_to_equity', 'N/A'))
+            with col2:
+                st.metric("PBR", fund.get('pbr', 'N/A'))
+                st.metric("ROE", fund.get('roe', 'N/A'))
+            with col3:
+                st.metric("매출성장률", fund.get('revenue_growth', 'N/A'))
+                st.metric("잉여현금흐름", fund.get('free_cashflow', 'N/A'))
+        else:
+            st.info("기본적 분석 데이터가 없습니다.")
+            
+    with tab3:
+        peers = result.get('peer_data', [])
+        if peers:
+            st.dataframe(pd.DataFrame(peers), use_container_width=True)
+        else:
+            st.info("경쟁사 데이터가 없습니다.")
     
     # 뉴스 요약 및 감성 분석
     col1, col2 = st.columns(2)
@@ -390,7 +508,7 @@ def display_analysis_result(result, result_key="main"):
         ))
         
         fig.update_layout(height=300)
-        st.plotly_chart(fig, use_container_width=True, key=f"sentiment_{result['ticker']}_{result_key}")
+        st.plotly_chart(fig, width='stretch', key=f"sentiment_{result['ticker']}_{result_key}")
         
         st.markdown(f"""
         - **전체 감성**: {sentiment_data['sentiment']}
@@ -431,44 +549,10 @@ def display_analysis_result(result, result_key="main"):
     # 분석 시간
     st.caption(f"분석 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-
-def main():
-    """메인 애플리케이션"""
-    initialize_session_state()
-    
-    # 채팅 모드인 경우 채팅 화면만 표시
-    if st.session_state.show_chat:
-        render_chat_page()
-        return
-    
-    # 헤더
-    st.markdown('<div class="main-header">🧞 FinGenie</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">AI 기반 개인 맞춤형 투자 분석 비서</div>', unsafe_allow_html=True)
-    
-    # 사이드바
-    with st.sidebar:
-        # st.image("https://via.placeholder.com/300x100/667eea/ffffff?text=FinGenie", use_container_width=True)
-        
-        st.markdown("## ⚙️ 설정")
-        
-        # 투자 성향 선택
-        profile_names = {k: v['name'] for k, v in config.INVESTMENT_PROFILES.items()}
-        selected_profile = st.selectbox(
-            "투자 성향",
-            options=list(profile_names.keys()),
-            format_func=lambda x: profile_names[x],
-            index=list(profile_names.keys()).index(st.session_state.user_profile)
-        )
-        st.session_state.user_profile = selected_profile
-        
-        profile_info = config.INVESTMENT_PROFILES[selected_profile]
-        st.info(f"**{profile_info['name']}**\n\n{profile_info['description']}\n\n위험 허용도: {profile_info['risk_tolerance']}")
-        
-        st.markdown("---")
         
         # AI 챗봇 버튼
         st.markdown("## 💬 AI 어드바이저")
-        if st.button("🤖 AI 챗봇과 대화하기", use_container_width=True, type="primary"):
+        if st.button("🤖 AI 챗봇과 대화하기", width='stretch', type="primary"):
             st.session_state.show_chat = True
             st.rerun()
         
@@ -517,7 +601,7 @@ def main():
         
         with col3:
             st.markdown("<br>", unsafe_allow_html=True)
-            analyze_button = st.button("📊 분석하기", type="primary", use_container_width=True)
+            analyze_button = st.button("📊 분석하기", type="primary", width='stretch')
         
         # 분석 실행
         if analyze_button:
@@ -600,10 +684,15 @@ def main():
                     if "error" in normalized:
                         st.error(f"❌ {normalized['error']}")
                     else:
-                        st.session_state.portfolio.append({
-                            "ticker": normalized['ticker'],
-                            "shares": new_shares
-                        })
+                        # DB에 추가
+                        st.session_state.db.add_to_portfolio(
+                            st.session_state.user.id,
+                            normalized['ticker'],
+                            new_shares
+                        )
+                        # 포트폴리오 새로고침
+                        st.session_state.portfolio = st.session_state.db.get_portfolio(st.session_state.user.id)
+                        
                         st.success(f"✅ **{normalized['name']}** ({normalized['ticker']}) 종목이 포트폴리오에 추가되었습니다!")
                         st.rerun()
         
@@ -611,9 +700,10 @@ def main():
             st.markdown("### 보유 종목")
             
             portfolio_data = []
+            # DB 객체 리스트를 순회
             for item in st.session_state.portfolio:
-                ticker = item['ticker']
-                shares = item['shares']
+                ticker = item.ticker
+                shares = item.shares
                 
                 stock_data = get_stock_summary(ticker, period="1d")
                 if "error" not in stock_data:
@@ -633,46 +723,93 @@ def main():
                 total_value = df['평가금액'].sum()
                 st.metric("총 평가금액", f"₩{total_value:,.2f}")
                 
-                # 포트폴리오 분석
-                if st.button("🔍 포트폴리오 위험도 분석"):
-                    with st.spinner("분석 중..."):
-                        analysis = get_portfolio_analysis(st.session_state.portfolio)
+                # 시각화 (파이 차트 & 트리맵)
+                st.markdown("### 🎨 포트폴리오 시각화")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    fig_pie = px.pie(df, values='평가금액', names='종목명', title='종목별 비중')
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                    
+                with col2:
+                    fig_tree = px.treemap(df, path=['종목명'], values='평가금액', title='포트폴리오 트리맵')
+                    st.plotly_chart(fig_tree, use_container_width=True)
+                
+                # 포트폴리오 분석 및 백테스팅
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if st.button("🔍 포트폴리오 위험도 분석", use_container_width=True):
+                        with st.spinner("분석 중..."):
+                            # DB 객체를 딕셔너리 형태로 변환하여 호환성 유지
+                            portfolio_dicts = [{"ticker": item.ticker, "shares": item.shares} for item in st.session_state.portfolio]
+                            analysis = get_portfolio_analysis(portfolio_dicts)
+                            
+                            st.info(f"**총 평가액**: ₩{analysis['total_value']:,.2f}")
+                            st.info(f"**고위험 종목 수**: {analysis['high_risk_count']}개")
+                            
+                            if analysis['high_risk_stocks']:
+                                st.warning("⚠️ 주의가 필요한 종목")
+                                for stock in analysis['high_risk_stocks']:
+                                    st.markdown(f"- **{stock['name']}** (위험점수: {stock['risk_score']})")
+                
+                with col2:
+                    if st.button("🔙 1년 수익률 백테스팅", use_container_width=True):
+                        with st.spinner("과거 데이터 시뮬레이션 중..."):
+                            total_initial_value = 0
+                            total_current_value = 0
+                            
+                            # 간단한 백테스팅 로직 (1년 전 가격 대비 현재 가격)
+                            for item in st.session_state.portfolio:
+                                try:
+                                    stock = yf.Ticker(item.ticker)
+                                    hist = stock.history(period="1y")
+                                    if not hist.empty:
+                                        price_1y_ago = hist['Close'].iloc[0]
+                                        current_price = hist['Close'].iloc[-1]
+                                        
+                                        total_initial_value += price_1y_ago * item.shares
+                                        total_current_value += current_price * item.shares
+                                except:
+                                    pass
+                            
+                            if total_initial_value > 0:
+                                return_rate = ((total_current_value - total_initial_value) / total_initial_value) * 100
+                                color = "green" if return_rate >= 0 else "red"
+                                st.markdown(f"""
+                                ### 📅 1년 백테스팅 결과
+                                - 1년 전 평가액: **₩{total_initial_value:,.0f}**
+                                - 현재 평가액: **₩{total_current_value:,.0f}**
+                                - 수익률: <span style='color:{color}; font-size: 1.2em; font-weight: bold'>{return_rate:+.2f}%</span>
+                                """, unsafe_allow_html=True)
+                            else:
+                                st.error("데이터 부족으로 백테스팅을 수행할 수 없습니다.")
+
+                # 리밸런싱 제안
+                if st.button("⚖️ 리밸런싱 제안 받기", use_container_width=True):
+                     with st.spinner("AI가 포트폴리오를 분석 중입니다..."):
+                        # 간단한 리밸런싱 로직 (투자 성향 기반)
+                        profile = st.session_state.user_profile
+                        risk_tolerance = config.INVESTMENT_PROFILES[profile]['risk_tolerance']
                         
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("보유 종목 수", analysis['total_stocks'])
-                        with col2:
-                            st.metric("총 평가액", f"₩{analysis['total_value']:,.2f}")
-                        with col3:
-                            st.metric("고위험 종목", analysis['high_risk_count'])
+                        st.markdown(f"### 💡 {config.INVESTMENT_PROFILES[profile]['name']} 맞춤 리밸런싱")
                         
-                        if analysis['high_risk_stocks']:
-                            st.warning("⚠️ 주의가 필요한 종목")
-                            for stock in analysis['high_risk_stocks']:
-                                st.markdown(f"- **{stock['name']}** (위험점수: {stock['risk_score']})")
+                        if profile == "conservative":
+                            st.info("안정형 투자자이시군요. 변동성이 큰 기술주 비중을 줄이고, 배당주나 대형주 위주로 구성을 변경하는 것을 추천합니다.")
+                        elif profile == "aggressive":
+                            st.info("공격형 투자자이시군요. 현재 포트폴리오의 성장성을 더 높이기 위해 신흥 기술주 비중을 10% 정도 늘리는 것을 고려해보세요.")
+                        else:
+                            st.info("중립형 투자자이시군요. 현재 포트폴리오의 균형이 나쁘지 않습니다. 특정 섹터에 쏠리지 않도록 주기적으로 점검하세요.")
+
             
             if st.button("🗑️ 포트폴리오 초기화"):
+                st.session_state.db.clear_portfolio(st.session_state.user.id)
                 st.session_state.portfolio = []
                 st.rerun()
         else:
             st.info("포트폴리오가 비어있습니다. 종목을 추가해보세요!")
     
     # 탭 3: 분석 기록
-    with tabs[2]:
-        st.markdown("## 📜 분석 기록")
-        
-        if st.session_state.analysis_history:
-            for i, item in enumerate(st.session_state.analysis_history[:10]):
-                with st.expander(f"{item['timestamp'].strftime('%Y-%m-%d %H:%M')} - {item['result'].get('stock_name', 'N/A')}"):
-                    display_analysis_result(item['result'], result_key=f"history_{i}")
-            
-            if st.button("🗑️ 기록 삭제"):
-                st.session_state.analysis_history = []
-                st.rerun()
-        else:
-            st.info("아직 분석 기록이 없습니다.")
-    
-    # 푸터
     st.markdown("---")
     st.markdown("""
     <div style="text-align: center; color: #666; padding: 2rem;">

@@ -235,23 +235,27 @@ def get_stock_summary(ticker: str, period: str = "1mo") -> Dict:
         return {"error": str(e)}
 
 
-def get_stock_news(stock_name: str, max_results: int = 5) -> List[Dict]:
+import asyncio
+import aiohttp
+import feedparser
+import pandas_ta as ta
+
+async def fetch_feed(session, url):
+    async with session.get(url) as response:
+        return await response.text()
+
+async def get_stock_news_async(stock_name: str, max_results: int = 5) -> List[Dict]:
     """
-    특정 종목의 최신 뉴스를 가져옵니다.
-    
-    Args:
-        stock_name: 종목 이름 (예: "삼성전자")
-        max_results: 가져올 뉴스 개수
-    
-    Returns:
-        뉴스 리스트
+    비동기로 특정 종목의 최신 뉴스를 가져옵니다.
     """
     try:
-        # Google News RSS 피드 사용
         query = stock_name + " 주가"
         url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
         
-        feed = feedparser.parse(url)
+        async with aiohttp.ClientSession() as session:
+            xml_data = await fetch_feed(session, url)
+            
+        feed = feedparser.parse(xml_data)
         news_list = []
         
         for entry in feed.entries[:max_results]:
@@ -266,6 +270,101 @@ def get_stock_news(stock_name: str, max_results: int = 5) -> List[Dict]:
         return news_list
     except Exception as e:
         return [{"error": str(e)}]
+
+def get_stock_news(stock_name: str, max_results: int = 5) -> List[Dict]:
+    """
+    동기 래퍼 함수 (기존 코드 호환성 유지)
+    """
+    return asyncio.run(get_stock_news_async(stock_name, max_results))
+
+def get_technical_indicators(ticker: str, period: str = "6mo") -> Dict:
+    """
+    기술적 지표(RSI, MACD, BB)를 계산합니다.
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        df = stock.history(period=period)
+        
+        if df.empty:
+            return {"error": "데이터 부족"}
+        
+        # RSI
+        df.ta.rsi(length=14, append=True)
+        # MACD
+        df.ta.macd(append=True)
+        # Bollinger Bands
+        df.ta.bbands(length=20, std=2, append=True)
+        
+        last_row = df.iloc[-1]
+        
+        return {
+            "rsi": round(last_row.get('RSI_14', 0), 2),
+            "macd": round(last_row.get('MACD_12_26_9', 0), 2),
+            "macd_signal": round(last_row.get('MACDs_12_26_9', 0), 2),
+            "bb_upper": round(last_row.get('BBU_20_2.0', 0), 2),
+            "bb_lower": round(last_row.get('BBL_20_2.0', 0), 2),
+            "close": round(last_row['Close'], 2)
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+def get_fundamental_analysis(ticker: str) -> Dict:
+    """
+    기본적 분석 데이터(PER, PBR, ROE 등)를 가져옵니다.
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        return {
+            "per": info.get("trailingPE", "N/A"),
+            "pbr": info.get("priceToBook", "N/A"),
+            "roe": info.get("returnOnEquity", "N/A"),
+            "revenue_growth": info.get("revenueGrowth", "N/A"),
+            "debt_to_equity": info.get("debtToEquity", "N/A"),
+            "free_cashflow": info.get("freeCashflow", "N/A")
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+def get_peer_analysis(ticker: str) -> List[Dict]:
+    """
+    경쟁사 비교 분석 데이터를 가져옵니다.
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        sector = stock.info.get("sector")
+        industry = stock.info.get("industry")
+        
+        if not sector or not industry:
+            return []
+            
+        # 같은 산업군의 종목을 찾기 어렵기 때문에, 미리 정의된 경쟁사 리스트 사용
+        # 실제로는 스크리닝 API가 필요하지만, 여기서는 주요 종목에 대해 하드코딩된 리스트 사용
+        peers_map = {
+            "005930.KS": ["000660.KS", "MU"],  # 삼성전자 -> 하이닉스, 마이크론
+            "000660.KS": ["005930.KS", "MU"],
+            "AAPL": ["MSFT", "GOOGL"],
+            "TSLA": ["F", "GM", "TM"],
+        }
+        
+        peer_tickers = peers_map.get(ticker, [])
+        peers_data = []
+        
+        for p_ticker in peer_tickers:
+            p_stock = yf.Ticker(p_ticker)
+            p_info = p_stock.info
+            peers_data.append({
+                "ticker": p_ticker,
+                "name": p_info.get("longName", p_ticker),
+                "per": p_info.get("trailingPE", "N/A"),
+                "pbr": p_info.get("priceToBook", "N/A"),
+                "roe": p_info.get("returnOnEquity", "N/A")
+            })
+            
+        return peers_data
+    except Exception as e:
+        return []
 
 
 def get_sentiment_analysis(news_list: List[Dict]) -> Dict:

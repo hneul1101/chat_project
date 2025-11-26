@@ -11,7 +11,10 @@ from tools import (
     get_stock_summary,
     get_stock_news,
     get_sentiment_analysis,
-    calculate_risk_score
+    calculate_risk_score,
+    get_technical_indicators,
+    get_fundamental_analysis,
+    get_peer_analysis
 )
 
 
@@ -22,6 +25,9 @@ class InvestmentState(TypedDict):
     period: str
     user_profile: str
     stock_data: Dict
+    technical_indicators: Dict
+    fundamental_data: Dict
+    peer_data: List[Dict]
     news_data: List[Dict]
     news_summary: str
     sentiment_data: Dict
@@ -31,7 +37,7 @@ class InvestmentState(TypedDict):
 
 
 def fetch_stock_data(state: InvestmentState) -> InvestmentState:
-    """Step 1: 주가 데이터 및 뉴스 수집"""
+    """Step 1: 주가 데이터, 기술적/기본적 분석 및 뉴스 수집"""
     print("📊 주가 데이터 수집 중...")
     
     ticker = state["ticker"]
@@ -46,6 +52,15 @@ def fetch_stock_data(state: InvestmentState) -> InvestmentState:
     
     state["stock_data"] = stock_data
     state["stock_name"] = stock_data.get("name", ticker)
+    
+    # 기술적 지표
+    state["technical_indicators"] = get_technical_indicators(ticker, period)
+    
+    # 기본적 분석
+    state["fundamental_data"] = get_fundamental_analysis(ticker)
+    
+    # 경쟁사 분석
+    state["peer_data"] = get_peer_analysis(ticker)
     
     # 뉴스 데이터 가져오기
     print("📰 뉴스 데이터 수집 중...")
@@ -162,6 +177,8 @@ def generate_investment_advice(state: InvestmentState) -> InvestmentState:
         risk_data = state["risk_assessment"]
         sentiment_data = state["sentiment_data"]
         news_summary = state["news_summary"]
+        tech_data = state.get("technical_indicators", {})
+        fund_data = state.get("fundamental_data", {})
         user_profile = state.get("user_profile", "moderate")
         profile_info = config.INVESTMENT_PROFILES[user_profile]
         
@@ -172,6 +189,16 @@ def generate_investment_advice(state: InvestmentState) -> InvestmentState:
 위험도: {risk_data['risk_level']} (점수: {risk_data['risk_score']})
 시장 감성: {sentiment_data['sentiment']} (점수: {sentiment_data['score']})
 
+기술적 지표:
+- RSI: {tech_data.get('rsi', 'N/A')}
+- MACD: {tech_data.get('macd', 'N/A')} (Signal: {tech_data.get('macd_signal', 'N/A')})
+- 볼린저 밴드: 상단 {tech_data.get('bb_upper', 'N/A')}, 하단 {tech_data.get('bb_lower', 'N/A')}
+
+기본적 분석:
+- PER: {fund_data.get('per', 'N/A')}
+- PBR: {fund_data.get('pbr', 'N/A')}
+- ROE: {fund_data.get('roe', 'N/A')}
+
 뉴스 요약:
 {news_summary}
 
@@ -181,8 +208,9 @@ def generate_investment_advice(state: InvestmentState) -> InvestmentState:
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", """당신은 전문 투자 어드바이저입니다. 
-주어진 데이터를 바탕으로 투자자의 성향에 맞는 구체적이고 실용적인 투자 조언을 제공하세요.
-조언은 명확하고 이해하기 쉬워야 하며, 구체적인 근거를 포함해야 합니다."""),
+주어진 기술적, 기본적 분석 데이터와 뉴스, 투자자의 성향을 종합적으로 고려하여 구체적이고 실용적인 투자 조언을 제공하세요.
+특히 RSI, MACD 같은 기술적 지표와 PER, PBR 같은 펀더멘털 데이터를 근거로 활용하세요.
+조언은 명확하고 이해하기 쉬워야 합니다."""),
             ("human", f"다음 정보를 분석하여 투자 조언을 작성해주세요:\n\n{context}")
         ])
         
@@ -266,6 +294,9 @@ def analyze_stock(ticker: str, period: str = "1mo", user_profile: str = "moderat
         "period": period,
         "user_profile": user_profile,
         "stock_data": {},
+        "technical_indicators": {},
+        "fundamental_data": {},
+        "peer_data": [],
         "news_data": [],
         "news_summary": "",
         "sentiment_data": {},
