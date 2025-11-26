@@ -3,6 +3,7 @@ FinGenie - AI Investment Advisor Chatbot
 Streamlit Dashboard Application
 """
 import streamlit as st
+import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime
 import pandas as pd
@@ -114,7 +115,7 @@ def login_page():
         with st.form("login_form"):
             username = st.text_input("사용자명")
             password = st.text_input("비밀번호", type="password")
-            submit = st.form_submit_button("로그인", use_container_width=True)
+            submit = st.form_submit_button("로그인", width='stretch')
             
             if submit:
                 user = st.session_state.db.login_user(username, password)
@@ -134,7 +135,7 @@ def login_page():
             new_password = st.text_input("비밀번호", type="password")
             confirm_password = st.text_input("비밀번호 확인", type="password")
             profile = st.selectbox("투자 성향", options=list(config.INVESTMENT_PROFILES.keys()))
-            submit = st.form_submit_button("회원가입", use_container_width=True)
+            submit = st.form_submit_button("회원가입", width='stretch')
             
             if submit:
                 if new_password != confirm_password:
@@ -464,7 +465,7 @@ def display_analysis_result(result, result_key="main"):
     with tab3:
         peers = result.get('peer_data', [])
         if peers:
-            st.dataframe(pd.DataFrame(peers), use_container_width=True)
+            st.dataframe(pd.DataFrame(peers), width='stretch')
         else:
             st.info("경쟁사 데이터가 없습니다.")
     
@@ -549,6 +550,34 @@ def display_analysis_result(result, result_key="main"):
     # 분석 시간
     st.caption(f"분석 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
+
+def main():
+    """메인 애플리케이션"""
+    # 세션 상태 초기화
+    initialize_session_state()
+    
+    # 로그인 체크
+    if not st.session_state.user:
+        login_page()
+        return
+    
+    # 채팅 페이지 라우팅
+    if st.session_state.show_chat:
+        render_chat_page()
+        return
+    
+    # 사이드바
+    with st.sidebar:
+        st.markdown(f"### 👤 {st.session_state.user.username}")
+        
+        if st.button("🚪 로그아웃", width='stretch'):
+            st.session_state.user = None
+            st.session_state.portfolio = []
+            st.session_state.chat_history = []
+            st.session_state.chat_messages = []
+            st.rerun()
+        
+        st.markdown("---")
         
         # AI 챗봇 버튼
         st.markdown("## 💬 AI 어드바이저")
@@ -699,99 +728,177 @@ def display_analysis_result(result, result_key="main"):
         if st.session_state.portfolio:
             st.markdown("### 보유 종목")
             
-            portfolio_data = []
-            # DB 객체 리스트를 순회
+            korean_stocks = []
+            foreign_stocks = []
+            
+            # DB 객체 리스트를 순회하며 국내/해외 분리
             for item in st.session_state.portfolio:
                 ticker = item.ticker
                 shares = item.shares
                 
                 stock_data = get_stock_summary(ticker, period="1d")
                 if "error" not in stock_data:
-                    portfolio_data.append({
+                    is_korean = ticker.endswith(".KS") or ticker.endswith(".KQ")
+                    currency_symbol = "₩" if is_korean else "$"
+                    
+                    stock_info = {
                         "종목코드": ticker,
                         "종목명": stock_data.get("name", "N/A"),
                         "보유수량": shares,
                         "현재가": stock_data.get("current_price", 0),
                         "평가금액": stock_data.get("current_price", 0) * shares,
-                        "변동률": f"{stock_data.get('price_change_percent', 0):.2f}%"
-                    })
-            
-            if portfolio_data:
-                df = pd.DataFrame(portfolio_data)
-                st.dataframe(df, use_container_width=True)
-                
-                total_value = df['평가금액'].sum()
-                st.metric("총 평가금액", f"₩{total_value:,.2f}")
-                
-                # 시각화 (파이 차트 & 트리맵)
-                st.markdown("### 🎨 포트폴리오 시각화")
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    fig_pie = px.pie(df, values='평가금액', names='종목명', title='종목별 비중')
-                    st.plotly_chart(fig_pie, use_container_width=True)
+                        "변동률": f"{stock_data.get('price_change_percent', 0):.2f}%",
+                        "통화": currency_symbol
+                    }
                     
-                with col2:
-                    fig_tree = px.treemap(df, path=['종목명'], values='평가금액', title='포트폴리오 트리맵')
-                    st.plotly_chart(fig_tree, use_container_width=True)
-                
-                # 포트폴리오 분석 및 백테스팅
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    if st.button("🔍 포트폴리오 위험도 분석", use_container_width=True):
-                        with st.spinner("분석 중..."):
-                            # DB 객체를 딕셔너리 형태로 변환하여 호환성 유지
-                            portfolio_dicts = [{"ticker": item.ticker, "shares": item.shares} for item in st.session_state.portfolio]
-                            analysis = get_portfolio_analysis(portfolio_dicts)
+                    if is_korean:
+                        korean_stocks.append(stock_info)
+                    else:
+                        foreign_stocks.append(stock_info)
+            
+            # 좌우 분할: 국내 주식 (왼쪽) vs 해외 주식 (오른쪽)
+            col_kr, col_us = st.columns(2)
+            
+            # 왼쪽: 국내 주식
+            with col_kr:
+                st.markdown("#### 🇰🇷 국내 주식")
+                if korean_stocks:
+                    df_kr = pd.DataFrame(korean_stocks)
+                    display_df_kr = df_kr.drop(columns=['통화'])
+                    st.dataframe(display_df_kr, width='stretch')
+                    
+                    total_value_kr = df_kr['평가금액'].sum()
+                    st.metric("총 평가금액", f"₩{total_value_kr:,.0f}")
+                    
+                    # 국내 주식 시각화
+                    st.markdown("##### 📊 국내 주식 비중")
+                    fig_pie_kr = px.pie(df_kr, values='평가금액', names='종목명', title='')
+                    st.plotly_chart(fig_pie_kr, width='stretch')
+                else:
+                    st.info("국내 주식이 없습니다.")
+            
+            # 오른쪽: 해외 주식
+            with col_us:
+                st.markdown("#### � 해외 주식")
+                if foreign_stocks:
+                    df_us = pd.DataFrame(foreign_stocks)
+                    display_df_us = df_us.drop(columns=['통화'])
+                    st.dataframe(display_df_us, width='stretch')
+                    
+                    total_value_us = df_us['평가금액'].sum()
+                    st.metric("총 평가금액", f"${total_value_us:,.2f}")
+                    
+                    # 해외 주식 시각화
+                    st.markdown("##### 📊 해외 주식 비중")
+                    fig_pie_us = px.pie(df_us, values='평가금액', names='종목명', title='')
+                    st.plotly_chart(fig_pie_us, width='stretch')
+                else:
+                    st.info("해외 주식이 없습니다.")
+            
+            # 포트폴리오 분석 및 관리 버튼
+            st.markdown("---")
+            col_kr_btn, col_us_btn = st.columns(2)
+            
+            # 왼쪽: 국내 주식 분석
+            with col_kr_btn:
+                if korean_stocks:
+                    if st.button("🔍 국내 주식 위험도 분석", width='stretch', key="kr_risk"):
+                        with st.spinner("국내 주식 분석 중..."):
+                            kr_portfolio = [{"ticker": item.ticker, "shares": item.shares} 
+                                          for item in st.session_state.portfolio 
+                                          if item.ticker.endswith(".KS") or item.ticker.endswith(".KQ")]
+                            analysis = get_portfolio_analysis(kr_portfolio)
                             
-                            st.info(f"**총 평가액**: ₩{analysis['total_value']:,.2f}")
+                            st.info(f"**국내 주식 총 평가액**: ₩{analysis['total_value']:,.0f}")
                             st.info(f"**고위험 종목 수**: {analysis['high_risk_count']}개")
                             
                             if analysis['high_risk_stocks']:
                                 st.warning("⚠️ 주의가 필요한 종목")
                                 for stock in analysis['high_risk_stocks']:
                                     st.markdown(f"- **{stock['name']}** (위험점수: {stock['risk_score']})")
-                
-                with col2:
-                    if st.button("🔙 1년 수익률 백테스팅", use_container_width=True):
-                        with st.spinner("과거 데이터 시뮬레이션 중..."):
-                            total_initial_value = 0
-                            total_current_value = 0
+                    
+                    if st.button("� 국내 주식 1년 백테스팅", width='stretch', key="kr_backtest"):
+                        with st.spinner("국내 주식 과거 데이터 분석 중..."):
+                            total_initial = 0
+                            total_current = 0
                             
-                            # 간단한 백테스팅 로직 (1년 전 가격 대비 현재 가격)
                             for item in st.session_state.portfolio:
-                                try:
-                                    stock = yf.Ticker(item.ticker)
-                                    hist = stock.history(period="1y")
-                                    if not hist.empty:
-                                        price_1y_ago = hist['Close'].iloc[0]
-                                        current_price = hist['Close'].iloc[-1]
-                                        
-                                        total_initial_value += price_1y_ago * item.shares
-                                        total_current_value += current_price * item.shares
-                                except:
-                                    pass
+                                if item.ticker.endswith(".KS") or item.ticker.endswith(".KQ"):
+                                    try:
+                                        stock = yf.Ticker(item.ticker)
+                                        hist = stock.history(period="1y")
+                                        if not hist.empty:
+                                            total_initial += hist['Close'].iloc[0] * item.shares
+                                            total_current += hist['Close'].iloc[-1] * item.shares
+                                    except:
+                                        pass
                             
-                            if total_initial_value > 0:
-                                return_rate = ((total_current_value - total_initial_value) / total_initial_value) * 100
+                            if total_initial > 0:
+                                return_rate = ((total_current - total_initial) / total_initial) * 100
                                 color = "green" if return_rate >= 0 else "red"
                                 st.markdown(f"""
-                                ### 📅 1년 백테스팅 결과
-                                - 1년 전 평가액: **₩{total_initial_value:,.0f}**
-                                - 현재 평가액: **₩{total_current_value:,.0f}**
-                                - 수익률: <span style='color:{color}; font-size: 1.2em; font-weight: bold'>{return_rate:+.2f}%</span>
+                                **📊 국내 주식 1년 수익률**
+                                - 1년 전: ₩{total_initial:,.0f}
+                                - 현재: ₩{total_current:,.0f}
+                                - 수익률: <span style='color:{color}; font-weight: bold'>{return_rate:+.2f}%</span>
                                 """, unsafe_allow_html=True)
                             else:
-                                st.error("데이터 부족으로 백테스팅을 수행할 수 없습니다.")
-
-                # 리밸런싱 제안
-                if st.button("⚖️ 리밸런싱 제안 받기", use_container_width=True):
-                     with st.spinner("AI가 포트폴리오를 분석 중입니다..."):
-                        # 간단한 리밸런싱 로직 (투자 성향 기반)
+                                st.error("데이터 부족")
+            
+            # 오른쪽: 해외 주식 분석
+            with col_us_btn:
+                if foreign_stocks:
+                    if st.button("🔍 해외 주식 위험도 분석", width='stretch', key="us_risk"):
+                        with st.spinner("해외 주식 분석 중..."):
+                            us_portfolio = [{"ticker": item.ticker, "shares": item.shares} 
+                                          for item in st.session_state.portfolio 
+                                          if not (item.ticker.endswith(".KS") or item.ticker.endswith(".KQ"))]
+                            analysis = get_portfolio_analysis(us_portfolio)
+                            
+                            st.info(f"**해외 주식 총 평가액**: ${analysis['total_value']:,.2f}")
+                            st.info(f"**고위험 종목 수**: {analysis['high_risk_count']}개")
+                            
+                            if analysis['high_risk_stocks']:
+                                st.warning("⚠️ 주의가 필요한 종목")
+                                for stock in analysis['high_risk_stocks']:
+                                    st.markdown(f"- **{stock['name']}** (위험점수: {stock['risk_score']})")
+                    
+                    if st.button("📅 해외 주식 1년 백테스팅", width='stretch', key="us_backtest"):
+                        with st.spinner("해외 주식 과거 데이터 분석 중..."):
+                            total_initial = 0
+                            total_current = 0
+                            
+                            for item in st.session_state.portfolio:
+                                if not (item.ticker.endswith(".KS") or item.ticker.endswith(".KQ")):
+                                    try:
+                                        stock = yf.Ticker(item.ticker)
+                                        hist = stock.history(period="1y")
+                                        if not hist.empty:
+                                            total_initial += hist['Close'].iloc[0] * item.shares
+                                            total_current += hist['Close'].iloc[-1] * item.shares
+                                    except:
+                                        pass
+                            
+                            if total_initial > 0:
+                                return_rate = ((total_current - total_initial) / total_initial) * 100
+                                color = "green" if return_rate >= 0 else "red"
+                                st.markdown(f"""
+                                **📊 해외 주식 1년 수익률**
+                                - 1년 전: ${total_initial:,.2f}
+                                - 현재: ${total_current:,.2f}
+                                - 수익률: <span style='color:{color}; font-weight: bold'>{return_rate:+.2f}%</span>
+                                """, unsafe_allow_html=True)
+                            else:
+                                st.error("데이터 부족")
+            
+            # 전체 포트폴리오 관리
+            st.markdown("---")
+            col_rebal, col_clear = st.columns(2)
+            
+            with col_rebal:
+                if st.button("⚖️ 리밸런싱 제안 받기", width='stretch'):
+                    with st.spinner("AI가 포트폴리오를 분석 중입니다..."):
                         profile = st.session_state.user_profile
-                        risk_tolerance = config.INVESTMENT_PROFILES[profile]['risk_tolerance']
-                        
                         st.markdown(f"### 💡 {config.INVESTMENT_PROFILES[profile]['name']} 맞춤 리밸런싱")
                         
                         if profile == "conservative":
@@ -800,12 +907,12 @@ def display_analysis_result(result, result_key="main"):
                             st.info("공격형 투자자이시군요. 현재 포트폴리오의 성장성을 더 높이기 위해 신흥 기술주 비중을 10% 정도 늘리는 것을 고려해보세요.")
                         else:
                             st.info("중립형 투자자이시군요. 현재 포트폴리오의 균형이 나쁘지 않습니다. 특정 섹터에 쏠리지 않도록 주기적으로 점검하세요.")
-
             
-            if st.button("🗑️ 포트폴리오 초기화"):
-                st.session_state.db.clear_portfolio(st.session_state.user.id)
-                st.session_state.portfolio = []
-                st.rerun()
+            with col_clear:
+                if st.button("🗑️ 포트폴리오 초기화", width='stretch'):
+                    st.session_state.db.clear_portfolio(st.session_state.user.id)
+                    st.session_state.portfolio = []
+                    st.rerun()
         else:
             st.info("포트폴리오가 비어있습니다. 종목을 추가해보세요!")
     
