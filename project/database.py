@@ -1,5 +1,5 @@
 """
-Database layer for FinGenie
+Database layer for Finsearcher
 Handles User, Portfolio, and Chat History persistence using SQLite and SQLAlchemy.
 """
 from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, DateTime, Text, JSON
@@ -10,7 +10,7 @@ import bcrypt
 import os
 
 # Database Setup
-DB_FILE = "fingenie.db"
+DB_FILE = "finsearcher.db"
 engine = create_engine(f"sqlite:///{DB_FILE}", echo=False)
 Base = declarative_base()
 Session = sessionmaker(bind=engine)

@@ -1,5 +1,5 @@
 """
-RAG Utilities for FinGenie
+RAG Utilities for Finsearcher
 Handles document parsing (PDF, Text), embedding-based retrieval, and document QA.
 """
 import pypdf

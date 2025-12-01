@@ -1,5 +1,5 @@
 """
-Utility functions for FinGenie
+Utility functions for Finsearcher
 """
 import os
 import re
@@ -49,7 +49,7 @@ def generate_pdf_report(chat_history, user_profile):
         def header(self):
             # 로고나 헤더 텍스트
             self.set_font('NanumGothic', 'B', 15)
-            self.cell(0, 10, 'FinGenie 투자 일기', 0, 1, 'C')
+            self.cell(0, 10, 'Finsearcher 투자 일기', 0, 1, 'C')
             self.ln(5)
 
         def footer(self):
@@ -84,7 +84,7 @@ def generate_pdf_report(chat_history, user_profile):
     pdf.set_font("NanumGothic", "", 10)
     
     for msg in chat_history:
-        role = "사용자" if msg["role"] == "user" else "FinGenie"
+        role = "사용자" if msg["role"] == "user" else "Finsearcher"
         content = msg["content"]
         
         # 역할 표시

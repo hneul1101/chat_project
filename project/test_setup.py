@@ -1,11 +1,11 @@
 """
 간단한 테스트 스크립트
-FinGenie의 주요 기능을 테스트합니다.
+Finsearcher의 주요 기능을 테스트합니다.
 """
 import sys
 
 print("=" * 50)
-print("FinGenie 테스트 스크립트")
+print("Finsearcher 테스트 스크립트")
 print("=" * 50)
 
 # 1. 기본 임포트 테스트

@@ -1,5 +1,5 @@
 """
-Voice Utilities for FinGenie
+Voice Utilities for Finsearcher
 Handles Text-to-Speech (TTS) and Speech-to-Text (STT) functionality.
 """
 import io

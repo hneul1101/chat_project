@@ -55,7 +55,7 @@ def chat_with_tools_streaming(user_message: str, chat_history: List[Dict] = None
         )
         
         # 시스템 프롬프트
-        system_prompt = f"""당신은 FinGenie, 전문적인 AI 투자 어드바이저입니다.
+        system_prompt = f"""당신은 Finsearcher, 전문적인 AI 투자 어드바이저입니다.
 
 **사용자 투자 성향:** {profile_info['name']} - {profile_info['description']}
 

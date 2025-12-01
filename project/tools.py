@@ -1,5 +1,5 @@
 """
-LangChain Tools for FinGenie AI Investment Advisor
+LangChain Tools for Finsearcher AI Investment Advisor
 """
 import yfinance as yf
 import requests
@@ -551,7 +551,7 @@ def chat_with_ai(user_message: str, chat_history: List[Dict] = None, user_profil
         profile_info = config.INVESTMENT_PROFILES.get(user_profile, config.INVESTMENT_PROFILES["moderate"])
         
         # 시스템 프롬프트
-        system_message = f"""당신은 FinGenie, 전문적인 AI 투자 어드바이저입니다.
+        system_message = f"""당신은 Finsearcher, 전문적인 AI 투자 어드바이저입니다.
 
 **당신의 역할:**
 - 친절하고 전문적으로 투자 관련 질문에 답변합니다

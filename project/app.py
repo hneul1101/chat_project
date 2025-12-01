@@ -1,5 +1,5 @@
 """
-FinGenie - AI Investment Advisor Chatbot
+Finsearcher - AI Investment Advisor Chatbot
 Streamlit Dashboard Application
 """
 import streamlit as st
@@ -37,7 +37,7 @@ if 'db' not in st.session_state:
 
 # 페이지 설정
 st.set_page_config(
-    page_title="FinGenie - AI 투자 어드바이저",
+    page_title="Finsearcher - AI 투자 어드바이저",
     page_icon="🧞",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -124,7 +124,7 @@ def initialize_session_state():
 
 def login_page():
     """로그인/회원가입 페이지"""
-    st.markdown('<div class="main-header">🧞 FinGenie</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">🔍 Finsearcher</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">로그인이 필요합니다</div>', unsafe_allow_html=True)
     
     tab1, tab2 = st.tabs(["로그인", "회원가입"])
@@ -170,11 +170,11 @@ def login_page():
 def render_chat_page():
     """독립된 AI 챗봇 페이지"""
     # 페이지 설정
-    st.markdown('<div class="main-header">💬 FinGenie AI 챗봇</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">💬 Finsearcher AI 챗봇</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">AI와 대화하며 투자 조언을 받아보세요</div>', unsafe_allow_html=True)
 
     with st.sidebar:
-        # st.image("https://via.placeholder.com/300x100/667eea/ffffff?text=FinGenie", width='stretch')
+        # st.image("https://via.placeholder.com/300x100/667eea/ffffff?text=Finsearcher", width='stretch')
         
         # 뒤로 가기 버튼
         if st.button("← 메인으로 돌아가기", width='stretch'):
@@ -332,7 +332,7 @@ def render_chat_page():
     if not st.session_state.chat_messages:
         with st.chat_message("assistant"):
             st.markdown("""
-            안녕하세요! 저는 **FinGenie AI 투자 어드바이저**입니다. 🧞✨
+            안녕하세요! 저는 **Finsearcher AI 투자 어드바이저**입니다. 🔍✨
             
             **제가 도와드릴 수 있는 것들:**
             - 📊 특정 종목 분석 및 투자 조언
@@ -1046,7 +1046,7 @@ def main():
     st.markdown("---")
     st.markdown("""
     <div style="text-align: center; color: #666; padding: 2rem;">
-        <p>🧞 <strong>FinGenie</strong> - AI 기반 투자 분석 비서</p>
+        <p>🔍 <strong>Finsearcher</strong> - AI 기반 투자 분석 비서</p>
         <p style="font-size: 0.8rem;">
             ⚠️ 본 서비스는 투자 참고용이며, 실제 투자 결정은 신중히 하시기 바랍니다.
         </p>

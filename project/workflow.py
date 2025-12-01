@@ -1,5 +1,5 @@
 """
-LangGraph Workflow for FinGenie AI Investment Advisor
+LangGraph Workflow for Finsearcher AI Investment Advisor
 뉴스 요약 → 감성 분석 → 투자 조언 순서의 그래프 워크플로우
 """
 from typing import TypedDict, Annotated, List, Dict
