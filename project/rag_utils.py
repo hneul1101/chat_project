@@ -1,10 +1,12 @@
 """
 RAG Utilities for FinGenie
-Handles document parsing (PDF, Text) and simple retrieval.
+Handles document parsing (PDF, Text), embedding-based retrieval, and document QA.
 """
 import pypdf
 import io
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
+import os
+import config
 
 def parse_pdf(file_bytes: bytes) -> str:
     """PDF 파일에서 텍스트 추출"""
@@ -48,7 +50,7 @@ def simple_retrieval(query: str, chunks: List[str], top_k: int = 3) -> List[str]
     for chunk in chunks:
         score = 0
         for term in query_terms:
-            if term in chunk:
+            if term.lower() in chunk.lower():
                 score += 1
         scores.append((score, chunk))
     
@@ -56,3 +58,194 @@ def simple_retrieval(query: str, chunks: List[str], top_k: int = 3) -> List[str]
     scores.sort(key=lambda x: x[0], reverse=True)
     
     return [chunk for score, chunk in scores[:top_k] if score > 0]
+
+
+class DocumentStore:
+    """
+    문서 저장소 클래스 - RAG를 위한 문서 관리
+    """
+    def __init__(self):
+        self.documents: Dict[str, Dict] = {}  # filename -> {text, chunks}
+    
+    def add_document(self, filename: str, file_bytes: bytes) -> Tuple[bool, str]:
+        """
+        문서 추가 (PDF 또는 텍스트 파일)
+        
+        Args:
+            filename: 파일명
+            file_bytes: 파일 바이트 데이터
+        
+        Returns:
+            (성공여부, 메시지)
+        """
+        try:
+            # 파일 확장자에 따라 파싱
+            if filename.lower().endswith('.pdf'):
+                text = parse_pdf(file_bytes)
+            elif filename.lower().endswith(('.txt', '.md')):
+                text = parse_text(file_bytes)
+            else:
+                return False, "지원하지 않는 파일 형식입니다. (PDF, TXT, MD 지원)"
+            
+            if text.startswith("Error"):
+                return False, text
+            
+            # 텍스트 청킹
+            chunks = chunk_text(text, chunk_size=800, overlap=100)
+            
+            # 저장
+            self.documents[filename] = {
+                "text": text,
+                "chunks": chunks,
+                "chunk_count": len(chunks)
+            }
+            
+            return True, f"'{filename}' 문서가 추가되었습니다. ({len(chunks)}개 청크)"
+        
+        except Exception as e:
+            return False, f"문서 처리 중 오류: {str(e)}"
+    
+    def remove_document(self, filename: str) -> bool:
+        """문서 제거"""
+        if filename in self.documents:
+            del self.documents[filename]
+            return True
+        return False
+    
+    def get_all_chunks(self) -> List[str]:
+        """모든 문서의 청크 반환"""
+        all_chunks = []
+        for doc in self.documents.values():
+            all_chunks.extend(doc["chunks"])
+        return all_chunks
+    
+    def search(self, query: str, top_k: int = 5) -> List[str]:
+        """모든 문서에서 검색"""
+        all_chunks = self.get_all_chunks()
+        if not all_chunks:
+            return []
+        return simple_retrieval(query, all_chunks, top_k)
+    
+    def get_document_list(self) -> List[Dict]:
+        """문서 목록 반환"""
+        return [
+            {"filename": fname, "chunk_count": doc["chunk_count"]}
+            for fname, doc in self.documents.items()
+        ]
+    
+    def clear(self):
+        """모든 문서 삭제"""
+        self.documents.clear()
+
+
+def answer_with_rag(query: str, document_store: DocumentStore, chat_history: List[Dict] = None) -> str:
+    """
+    RAG를 사용하여 문서 기반 질의응답
+    
+    Args:
+        query: 사용자 질문
+        document_store: 문서 저장소
+        chat_history: 이전 대화 기록
+    
+    Returns:
+        AI 응답
+    """
+    if not config.OPENAI_API_KEY or config.OPENAI_API_KEY == "your_openai_api_key_here":
+        return "⚠️ OpenAI API 키가 설정되지 않았습니다."
+    
+    # 관련 문서 검색
+    relevant_chunks = document_store.search(query, top_k=5)
+    
+    if not relevant_chunks:
+        return "📚 업로드된 문서에서 관련 내용을 찾을 수 없습니다. 다른 질문을 해보시거나 관련 문서를 업로드해주세요."
+    
+    # 컨텍스트 구성
+    context = "\n\n---\n\n".join(relevant_chunks)
+    
+    try:
+        from langchain_openai import ChatOpenAI
+        from langchain_core.prompts import ChatPromptTemplate
+        from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+        
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0.3,
+            api_key=config.OPENAI_API_KEY
+        )
+        
+        system_prompt = f"""당신은 투자 문서 분석 전문가입니다. 
+사용자가 업로드한 문서의 내용을 기반으로 질문에 답변해주세요.
+
+**참고 문서 내용:**
+{context}
+
+**답변 가이드라인:**
+1. 반드시 제공된 문서 내용을 기반으로 답변하세요.
+2. 문서에 없는 내용은 "문서에서 해당 정보를 찾을 수 없습니다"라고 답변하세요.
+3. 답변은 명확하고 구체적으로 작성하세요.
+4. 관련 인용구가 있다면 함께 언급하세요."""
+        
+        messages = [SystemMessage(content=system_prompt)]
+        
+        # 이전 대화 기록 추가
+        if chat_history:
+            for msg in chat_history[-4:]:
+                if msg["role"] == "user":
+                    messages.append(HumanMessage(content=msg["content"]))
+                elif msg["role"] == "assistant":
+                    messages.append(AIMessage(content=msg["content"]))
+        
+        messages.append(HumanMessage(content=query))
+        
+        response = llm.invoke(messages)
+        return response.content
+        
+    except Exception as e:
+        return f"❌ 오류가 발생했습니다: {str(e)}"
+
+
+def summarize_document(document_store: DocumentStore, filename: str = None) -> str:
+    """
+    문서 요약 생성
+    
+    Args:
+        document_store: 문서 저장소
+        filename: 특정 파일명 (None이면 전체)
+    
+    Returns:
+        요약 텍스트
+    """
+    if not config.OPENAI_API_KEY or config.OPENAI_API_KEY == "your_openai_api_key_here":
+        return "⚠️ OpenAI API 키가 설정되지 않았습니다."
+    
+    if filename:
+        if filename not in document_store.documents:
+            return f"'{filename}' 문서를 찾을 수 없습니다."
+        text = document_store.documents[filename]["text"][:4000]  # 토큰 제한
+    else:
+        all_text = " ".join([doc["text"][:2000] for doc in document_store.documents.values()])
+        text = all_text[:4000]
+    
+    if not text.strip():
+        return "요약할 문서가 없습니다."
+    
+    try:
+        from langchain_openai import ChatOpenAI
+        from langchain_core.prompts import ChatPromptTemplate
+        
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0.3,
+            api_key=config.OPENAI_API_KEY
+        )
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "당신은 문서 요약 전문가입니다. 투자 관련 문서를 핵심 내용 위주로 요약해주세요."),
+            ("human", f"다음 문서를 3-5개의 핵심 포인트로 요약해주세요:\n\n{text}")
+        ])
+        
+        response = llm.invoke(prompt.format_messages())
+        return response.content
+        
+    except Exception as e:
+        return f"❌ 요약 중 오류가 발생했습니다: {str(e)}"

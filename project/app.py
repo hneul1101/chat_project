@@ -20,7 +20,16 @@ from tools import (
     get_stock_news
 )
 from tools_agent import chat_with_tools_streaming
+from rag_utils import DocumentStore, answer_with_rag, summarize_document
+from voice_utils import text_to_speech, get_audio_player_html, process_audio_input
 import yfinance as yf
+
+# 음성 입력 라이브러리 (선택적)
+try:
+    from streamlit_mic_recorder import mic_recorder
+    VOICE_INPUT_AVAILABLE = True
+except ImportError:
+    VOICE_INPUT_AVAILABLE = False
 
 # DB Manager 초기화
 if 'db' not in st.session_state:
@@ -103,6 +112,15 @@ def initialize_session_state():
         st.session_state.chat_messages = []
     if 'show_chat' not in st.session_state:
         st.session_state.show_chat = False
+    # RAG 문서 저장소 초기화
+    if 'document_store' not in st.session_state:
+        st.session_state.document_store = DocumentStore()
+    # 음성 출력 활성화 여부
+    if 'tts_enabled' not in st.session_state:
+        st.session_state.tts_enabled = False
+    # RAG 모드 여부
+    if 'rag_mode' not in st.session_state:
+        st.session_state.rag_mode = False
 
 def login_page():
     """로그인/회원가입 페이지"""
@@ -214,6 +232,90 @@ def render_chat_page():
         
         st.markdown("---")
         
+        # 📚 RAG 문서 관리 섹션
+        st.markdown("## 📚 문서 기반 QA (RAG)")
+        
+        # RAG 모드 토글
+        st.session_state.rag_mode = st.toggle("📖 문서 기반 답변 모드", value=st.session_state.rag_mode)
+        
+        if st.session_state.rag_mode:
+            st.info("RAG 모드가 활성화되었습니다. 업로드된 문서를 기반으로 답변합니다.")
+        
+        # 파일 업로드
+        uploaded_file = st.file_uploader(
+            "📄 문서 업로드 (PDF, TXT)",
+            type=['pdf', 'txt', 'md'],
+            key="doc_uploader"
+        )
+        
+        if uploaded_file is not None:
+            if st.button("📤 문서 추가", width='stretch'):
+                with st.spinner("문서 처리 중..."):
+                    file_bytes = uploaded_file.read()
+                    success, message = st.session_state.document_store.add_document(
+                        uploaded_file.name,
+                        file_bytes
+                    )
+                    if success:
+                        st.success(message)
+                    else:
+                        st.error(message)
+        
+        # 업로드된 문서 목록
+        doc_list = st.session_state.document_store.get_document_list()
+        if doc_list:
+            st.markdown("**업로드된 문서:**")
+            for doc in doc_list:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.text(f"📄 {doc['filename']} ({doc['chunk_count']}청크)")
+                with col2:
+                    if st.button("🗑️", key=f"del_{doc['filename']}"):
+                        st.session_state.document_store.remove_document(doc['filename'])
+                        st.rerun()
+            
+            # 문서 요약 버튼
+            if st.button("📝 문서 요약", width='stretch'):
+                with st.spinner("문서 요약 중..."):
+                    summary = summarize_document(st.session_state.document_store)
+                    st.markdown("**📋 문서 요약:**")
+                    st.info(summary)
+        
+        st.markdown("---")
+        
+        # 🎤 음성 기능 섹션
+        st.markdown("## 🎤 음성 기능")
+        
+        # TTS 토글
+        st.session_state.tts_enabled = st.toggle("🔊 음성 출력 (TTS)", value=st.session_state.tts_enabled)
+        
+        if st.session_state.tts_enabled:
+            st.info("AI 응답을 음성으로 들을 수 있습니다.")
+        
+        # 음성 입력 (STT)
+        if VOICE_INPUT_AVAILABLE:
+            st.markdown("**🎙️ 음성으로 질문하기:**")
+            audio_data = mic_recorder(
+                start_prompt="🎙️ 녹음 시작",
+                stop_prompt="⏹️ 녹음 중지",
+                key="voice_input"
+            )
+            
+            if audio_data:
+                with st.spinner("음성 인식 중..."):
+                    text, error = process_audio_input(audio_data)
+                    if error:
+                        st.error(error)
+                    elif text:
+                        st.success(f"인식된 텍스트: {text}")
+                        if st.button("📤 이 질문으로 전송", width='stretch'):
+                            st.session_state.pending_input = text
+                            st.rerun()
+        else:
+            st.caption("음성 입력을 사용하려면 streamlit-mic-recorder를 설치하세요.")
+        
+        st.markdown("---")
+        
         # API 상태
         if config.OPENAI_API_KEY and config.OPENAI_API_KEY != "your_openai_api_key_here":
             st.success("✅ OpenAI API 연결됨")
@@ -283,36 +385,60 @@ def render_chat_page():
             full_response = ""
             
             try:
-                with st.spinner("분석 중..."):
-                    # 도구를 사용하는 AI 호출
-                    response_generator, used_tools = chat_with_tools_streaming(
-                        prompt,
-                        st.session_state.chat_history[:-1],
-                        st.session_state.user_profile
-                    )
-                
-                # 사용된 도구 표시 (Expander로 깔끔하게)
-                if used_tools:
-                    tool_names = {
-                        "get_stock_analysis": "📊 실시간 종목 분석",
-                        "get_stock_news": "📰 뉴스 검색",
-                        "get_market_status": "� 시장 현황"
-                    }
-                    tool_display = " • ".join([tool_names.get(t, t) for t in used_tools])
-                    with st.expander(f"🔧 사용된 도구: {tool_display}"):
-                        st.json(used_tools)
+                # RAG 모드인 경우 문서 기반 답변
+                if st.session_state.rag_mode and st.session_state.document_store.get_all_chunks():
+                    with st.spinner("📚 문서에서 검색 중..."):
+                        full_response = answer_with_rag(
+                            prompt,
+                            st.session_state.document_store,
+                            st.session_state.chat_history[:-1]
+                        )
+                        message_placeholder.markdown(full_response)
+                        
+                        # 사용된 기능 표시
+                        with st.expander("🔧 사용된 기능: 📚 RAG 문서 검색"):
+                            st.info("업로드된 문서에서 관련 내용을 검색하여 답변했습니다.")
+                else:
+                    # 일반 모드: 도구를 사용하는 AI 호출
+                    with st.spinner("분석 중..."):
+                        response_generator, used_tools = chat_with_tools_streaming(
+                            prompt,
+                            st.session_state.chat_history[:-1],
+                            st.session_state.user_profile
+                        )
+                    
+                    # 사용된 도구 표시 (Expander로 깔끔하게)
+                    if used_tools:
+                        tool_names = {
+                            "get_stock_analysis": "📊 실시간 종목 분석",
+                            "get_stock_news": "📰 뉴스 검색",
+                            "get_market_status": "🌐 시장 현황"
+                        }
+                        tool_display = " • ".join([tool_names.get(t, t) for t in used_tools])
+                        with st.expander(f"🔧 사용된 도구: {tool_display}"):
+                            st.json(used_tools)
 
-                # 스트리밍 응답
-                for chunk in response_generator:
-                    full_response += chunk
-                    message_placeholder.markdown(full_response + "▌")
-                
-                # 최종 응답 표시 (커서 제거)
-                message_placeholder.markdown(full_response)
+                    # 스트리밍 응답
+                    for chunk in response_generator:
+                        full_response += chunk
+                        message_placeholder.markdown(full_response + "▌")
+                    
+                    # 최종 응답 표시 (커서 제거)
+                    message_placeholder.markdown(full_response)
                 
                 # 응답 저장
                 st.session_state.chat_messages.append({"role": "assistant", "content": full_response})
                 st.session_state.chat_history.append({"role": "assistant", "content": full_response})
+                
+                # TTS 음성 출력
+                if st.session_state.tts_enabled and full_response:
+                    with st.spinner("🔊 음성 생성 중..."):
+                        audio_bytes, error = text_to_speech(full_response)
+                        if audio_bytes:
+                            audio_html = get_audio_player_html(audio_bytes)
+                            st.markdown(audio_html, unsafe_allow_html=True)
+                        elif error:
+                            st.caption(f"음성 생성 실패: {error}")
                 
             except Exception as e:
                 error_msg = f"❌ 오류가 발생했습니다: {str(e)}"
