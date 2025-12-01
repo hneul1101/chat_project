@@ -2,10 +2,6 @@
 
 FinGenie는 **Streamlit** 기반의 AI 투자 어드바이저 챗봇 애플리케이션입니다. LangChain, LangGraph를 활용하여 실시간 주가 분석, 뉴스 감성 분석, 포트폴리오 관리 등 종합적인 투자 분석 서비스를 제공합니다.
 
-![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)
-![LangChain](https://img.shields.io/badge/LangChain-0.1+-green.svg)
-
 ---
 
 ## 📁 프로젝트 구조
@@ -444,3 +440,4 @@ cd project
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
