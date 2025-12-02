@@ -370,10 +370,9 @@ streamlit run app.py
 - **문서 기반 답변**: 업로드된 문서 내용 기반 QA
 - **문서 요약**: 업로드된 문서 자동 요약
 
-### 🎤 음성 기능
-- **음성 입력 (STT)**: 마이크로 질문 입력 (Whisper API)
+### 🎤 음성 출력
 - **음성 출력 (TTS)**: AI 응답을 음성으로 출력 (gTTS)
-- **한국어 지원**: 한국어 음성 인식 및 합성
+- **한국어 지원**: 한국어 음성 인식
 
 ---
 
@@ -407,7 +406,7 @@ streamlit run app.py
 ✅ RAG - 문서 업로드, 청킹, 검색, QA
 ✅ 인터넷 검색 - Google News RSS 실시간 크롤링
 ✅ Function Calling - AI 에이전트 자동 도구 선택
-✅ TTS/STT - 음성 입출력 기능
+✅ TTS - 음성 출력 기능
 ✅ GUI - Streamlit 기반 웹 인터페이스
 ```
 
