@@ -21,7 +21,7 @@ project/
 ├── workflow.py             # 📊 LangGraph 워크플로우 (분석 파이프라인)
 ├── utils.py                # 🛠️ 유틸리티 함수 (PDF 생성 등)
 ├── rag_utils.py            # 📚 RAG 유틸리티 (문서 파싱, 청킹, 검색, QA)
-├── voice_utils.py          # 🎤 음성 기능 (TTS, STT)
+├── voice_utils.py          # 🎤 음성 출력 (TTS)
 ├── requirements.txt        # 📦 의존성 패키지 목록
 ├── test_pdf.py             # 🧪 PDF 기능 테스트
 ├── test_setup.py           # 🧪 환경 설정 테스트
@@ -237,14 +237,12 @@ def summarize_document(store)        # 문서 요약 생성
 
 ### 9️⃣ `voice_utils.py` - 음성 기능 유틸리티
 
-TTS(음성 출력) 및 STT(음성 입력) 기능입니다.
+TTS(음성 출력) 기능입니다.
 
 **주요 함수:**
 ```python
 def text_to_speech(text, lang)    # gTTS를 사용한 음성 합성
 def get_audio_player_html(bytes)  # HTML 오디오 플레이어 생성
-def speech_to_text_whisper(bytes) # Whisper API를 사용한 음성 인식
-def process_audio_input(data)     # 마이크 입력 처리
 ```
 
 ---
@@ -331,7 +329,6 @@ streamlit run app.py
 | `bcrypt` | ≥4.0.0 | 비밀번호 해싱 |
 | `aiohttp` | ≥3.9.0 | 비동기 HTTP 요청 |
 | `gTTS` | ≥2.4.0 | 텍스트 음성 변환 (TTS) |
-| `streamlit-mic-recorder` | ≥0.0.4 | 음성 입력 (STT) |
 | `pypdf` | ≥3.17.0 | PDF 문서 파싱 (RAG) |
 
 ---
@@ -417,5 +414,6 @@ streamlit run app.py
 본 서비스는 **투자 참고용**이며, 실제 투자 결정은 사용자 본인의 책임입니다. AI가 제공하는 분석 및 조언은 참고 자료일 뿐, 투자 손실에 대한 책임을 지지 않습니다.
 
 ---
+
 
 
