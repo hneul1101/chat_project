@@ -51,22 +51,27 @@ def text_to_speech(text: str, lang: str = "ko") -> Tuple[Optional[bytes], Option
         return None, f"음성 변환 중 오류: {str(e)}"
 
 
-def get_audio_player_html(audio_bytes: bytes) -> str:
+def get_audio_player_html(audio_bytes: bytes, playback_rate: float = 1.5) -> str:
     """
     오디오 바이트를 HTML 오디오 플레이어로 변환
     
     Args:
         audio_bytes: 오디오 데이터
+        playback_rate: 재생 속도 (1.0 = 기본, 1.5 = 1.5배속)
     
     Returns:
         HTML 문자열
     """
     audio_base64 = base64.b64encode(audio_bytes).decode()
+    # JavaScript로 재생 속도 조절
     return f'''
-    <audio controls autoplay>
+    <audio id="tts_audio" controls autoplay>
         <source src="data:audio/mp3;base64,{audio_base64}" type="audio/mp3">
         브라우저가 오디오를 지원하지 않습니다.
     </audio>
+    <script>
+        document.getElementById('tts_audio').playbackRate = {playback_rate};
+    </script>
     '''
 
 

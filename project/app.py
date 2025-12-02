@@ -21,15 +21,8 @@ from tools import (
 )
 from tools_agent import chat_with_tools_streaming
 from rag_utils import DocumentStore, answer_with_rag, summarize_document
-from voice_utils import text_to_speech, get_audio_player_html, process_audio_input
+from voice_utils import text_to_speech, get_audio_player_html
 import yfinance as yf
-
-# 음성 입력 라이브러리 (선택적)
-try:
-    from streamlit_mic_recorder import mic_recorder
-    VOICE_INPUT_AVAILABLE = True
-except ImportError:
-    VOICE_INPUT_AVAILABLE = False
 
 # DB Manager 초기화
 if 'db' not in st.session_state:
@@ -38,7 +31,7 @@ if 'db' not in st.session_state:
 # 페이지 설정
 st.set_page_config(
     page_title="Finsearcher - AI 투자 어드바이저",
-    page_icon="🧞",
+    page_icon="🔍",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -239,7 +232,12 @@ def render_chat_page():
         st.session_state.rag_mode = st.toggle("📖 문서 기반 답변 모드", value=st.session_state.rag_mode)
         
         if st.session_state.rag_mode:
-            st.info("RAG 모드가 활성화되었습니다. 업로드된 문서를 기반으로 답변합니다.")
+            doc_count = len(st.session_state.document_store.get_document_list())
+            chunk_count = len(st.session_state.document_store.get_all_chunks())
+            if doc_count > 0:
+                st.success(f"✅ RAG 모드 활성화됨 | 📄 문서 {doc_count}개 | 📑 청크 {chunk_count}개")
+            else:
+                st.warning("⚠️ RAG 모드가 켜져있지만 문서가 없습니다. 문서를 업로드해주세요!")
         
         # 파일 업로드
         uploaded_file = st.file_uploader(
@@ -290,29 +288,7 @@ def render_chat_page():
         st.session_state.tts_enabled = st.toggle("🔊 음성 출력 (TTS)", value=st.session_state.tts_enabled)
         
         if st.session_state.tts_enabled:
-            st.info("AI 응답을 음성으로 들을 수 있습니다.")
-        
-        # 음성 입력 (STT)
-        if VOICE_INPUT_AVAILABLE:
-            st.markdown("**🎙️ 음성으로 질문하기:**")
-            audio_data = mic_recorder(
-                start_prompt="🎙️ 녹음 시작",
-                stop_prompt="⏹️ 녹음 중지",
-                key="voice_input"
-            )
-            
-            if audio_data:
-                with st.spinner("음성 인식 중..."):
-                    text, error = process_audio_input(audio_data)
-                    if error:
-                        st.error(error)
-                    elif text:
-                        st.success(f"인식된 텍스트: {text}")
-                        if st.button("📤 이 질문으로 전송", width='stretch'):
-                            st.session_state.pending_input = text
-                            st.rerun()
-        else:
-            st.caption("음성 입력을 사용하려면 streamlit-mic-recorder를 설치하세요.")
+            st.info("AI 응답을 음성으로 들을 수 있습니다. (1.5배속)")
         
         st.markdown("---")
         
@@ -448,13 +424,73 @@ def render_chat_page():
     # 예시 버튼 처리 (pending_input)
     if 'pending_input' in st.session_state and st.session_state.pending_input:
         prompt = st.session_state.pending_input
-        del st.session_state.pending_input
+        st.session_state.pending_input = None
         
         # 사용자 메시지 추가
         st.session_state.chat_messages.append({"role": "user", "content": prompt})
         st.session_state.chat_history.append({"role": "user", "content": prompt})
         
-        st.rerun()
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # AI 응답 처리
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()
+            full_response = ""
+            
+            try:
+                # RAG 모드인 경우 문서 기반 답변
+                if st.session_state.rag_mode and st.session_state.document_store.get_all_chunks():
+                    with st.spinner("📚 문서에서 검색 중..."):
+                        full_response = answer_with_rag(
+                            prompt,
+                            st.session_state.document_store,
+                            st.session_state.chat_history[:-1]
+                        )
+                        message_placeholder.markdown(full_response)
+                else:
+                    # 일반 모드: 도구를 사용하는 AI 호출
+                    with st.spinner("분석 중..."):
+                        response_generator, used_tools = chat_with_tools_streaming(
+                            prompt,
+                            st.session_state.chat_history[:-1],
+                            st.session_state.user_profile
+                        )
+                    
+                    # 사용된 도구 표시
+                    if used_tools:
+                        tool_names = {
+                            "get_stock_analysis": "📊 실시간 종목 분석",
+                            "get_stock_news": "📰 뉴스 검색",
+                            "get_market_status": "🌐 시장 현황"
+                        }
+                        tool_display = " • ".join([tool_names.get(t, t) for t in used_tools])
+                        with st.expander(f"🔧 사용된 도구: {tool_display}"):
+                            st.json(used_tools)
+
+                    # 스트리밍 응답
+                    for chunk in response_generator:
+                        full_response += chunk
+                        message_placeholder.markdown(full_response + "▌")
+                    
+                    message_placeholder.markdown(full_response)
+                
+                # 응답 저장
+                st.session_state.chat_messages.append({"role": "assistant", "content": full_response})
+                st.session_state.chat_history.append({"role": "assistant", "content": full_response})
+                
+                # TTS 음성 출력
+                if st.session_state.tts_enabled and full_response:
+                    with st.spinner("🔊 음성 생성 중..."):
+                        audio_bytes, error = text_to_speech(full_response)
+                        if audio_bytes:
+                            audio_html = get_audio_player_html(audio_bytes)
+                            st.markdown(audio_html, unsafe_allow_html=True)
+                
+            except Exception as e:
+                error_msg = f"❌ 오류가 발생했습니다: {str(e)}"
+                message_placeholder.error(error_msg)
+                st.session_state.chat_messages.append({"role": "assistant", "content": error_msg})
 
 
 def plot_stock_chart(ticker: str, period: str = "1mo", chart_key: str = "main"):
@@ -737,14 +773,23 @@ def main():
     with tabs[0]:
         st.markdown("## 🔍 종목 분석")
         
+        # 엔터 키로 분석 실행을 위한 세션 상태
+        if 'trigger_analysis' not in st.session_state:
+            st.session_state.trigger_analysis = False
+        
+        def on_ticker_enter():
+            st.session_state.trigger_analysis = True
+        
         col1, col2, col3 = st.columns([3, 1, 1])
         
         with col1:
-            # 종목 입력
+            # 종목 입력 (엔터 키 지원)
             ticker_input = st.text_input(
                 "종목 코드 입력",
                 value=st.session_state.get('selected_ticker', '005930.KS'),
-                placeholder="예: 005930.KS (삼성전자)"
+                placeholder="예: 005930.KS (삼성전자)",
+                on_change=on_ticker_enter,
+                key="ticker_input_field"
             )
         
         with col2:
@@ -758,8 +803,12 @@ def main():
             st.markdown("<br>", unsafe_allow_html=True)
             analyze_button = st.button("📊 분석하기", type="primary", width='stretch')
         
-        # 분석 실행
-        if analyze_button:
+        # 분석 실행 (버튼 클릭 또는 엔터 키)
+        should_analyze = analyze_button or st.session_state.trigger_analysis
+        if st.session_state.trigger_analysis:
+            st.session_state.trigger_analysis = False  # 리셋
+        
+        if should_analyze:
             if ticker_input:
                 with st.spinner("종목 코드 확인 중..."):
                     # 사용자 입력을 종목 코드로 변환
@@ -779,15 +828,23 @@ def main():
                                 user_profile=st.session_state.user_profile
                             )
                             
+                            # 분석 기록에 저장
+                            if not result.get("error"):
+                                analysis_record = {
+                                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                    "ticker": normalized['ticker'],
+                                    "name": result.get('stock_name', normalized['name']),
+                                    "period": period,
+                                    "current_price": result.get('stock_data', {}).get('current_price', 0),
+                                    "change_percent": result.get('stock_data', {}).get('price_change_percent', 0),
+                                    "recommendation": result.get('recommendation', 'N/A')
+                                }
+                                st.session_state.analysis_history.insert(0, analysis_record)
+                                # 최대 20개까지만 보관
+                                st.session_state.analysis_history = st.session_state.analysis_history[:20]
+                            
                             # 결과 표시
                             display_analysis_result(result, result_key="current_analysis")
-                            
-                            # 히스토리에 추가
-                            if not result.get("error"):
-                                st.session_state.analysis_history.insert(0, {
-                                    "timestamp": datetime.now(),
-                                    "result": result
-                                })
             else:
                 st.warning("종목 코드를 입력해주세요.")
         
@@ -905,7 +962,7 @@ def main():
             
             # 오른쪽: 해외 주식
             with col_us:
-                st.markdown("#### � 해외 주식")
+                st.markdown("#### 🌍 해외 주식")
                 if foreign_stocks:
                     df_us = pd.DataFrame(foreign_stocks)
                     display_df_us = df_us.drop(columns=['통화'])
@@ -943,7 +1000,7 @@ def main():
                                 for stock in analysis['high_risk_stocks']:
                                     st.markdown(f"- **{stock['name']}** (위험점수: {stock['risk_score']})")
                     
-                    if st.button("� 국내 주식 1년 백테스팅", width='stretch', key="kr_backtest"):
+                    if st.button("📅 국내 주식 1년 백테스팅", width='stretch', key="kr_backtest"):
                         with st.spinner("국내 주식 과거 데이터 분석 중..."):
                             total_initial = 0
                             total_current = 0
@@ -1043,6 +1100,51 @@ def main():
             st.info("포트폴리오가 비어있습니다. 종목을 추가해보세요!")
     
     # 탭 3: 분석 기록
+    with tabs[2]:
+        st.markdown("## 📜 분석 기록")
+        
+        if st.session_state.analysis_history:
+            st.info(f"총 {len(st.session_state.analysis_history)}개의 분석 기록이 있습니다.")
+            
+            for i, record in enumerate(st.session_state.analysis_history):
+                is_korean = record['ticker'].endswith('.KS') or record['ticker'].endswith('.KQ')
+                currency = "₩" if is_korean else "$"
+                change_color = "green" if record['change_percent'] >= 0 else "red"
+                
+                with st.expander(f"📊 {record['name']} ({record['ticker']}) - {record['timestamp']}", expanded=(i == 0)):
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("분석 시점", record['timestamp'])
+                    with col2:
+                        st.metric("현재가", f"{currency}{record['current_price']:,.2f}")
+                    with col3:
+                        st.metric("변동률", f"{record['change_percent']:+.2f}%", 
+                                  delta=f"{record['change_percent']:+.2f}%")
+                    
+                    st.markdown(f"**분석 기간**: {record['period']}")
+                    
+                    # 재분석 버튼
+                    if st.button(f"🔄 재분석", key=f"reanalyze_{i}"):
+                        st.session_state.selected_ticker = record['ticker']
+                        st.session_state.trigger_analysis = True
+                        st.rerun()
+            
+            # 기록 초기화 버튼
+            st.markdown("---")
+            if st.button("🗑️ 분석 기록 초기화", type="secondary"):
+                st.session_state.analysis_history = []
+                st.rerun()
+        else:
+            st.info("📊 종목 분석을 하면 여기에 기록이 저장됩니다.")
+            st.markdown("""
+            **분석 기록 사용법:**
+            1. '종목 분석' 탭에서 원하는 종목을 분석하세요.
+            2. 분석된 종목들이 자동으로 여기에 기록됩니다.
+            3. 기록을 클릭하면 상세 정보를 볼 수 있습니다.
+            4. '재분석' 버튼으로 최신 데이터로 다시 분석할 수 있습니다.
+            """)
+    
     st.markdown("---")
     st.markdown("""
     <div style="text-align: center; color: #666; padding: 2rem;">

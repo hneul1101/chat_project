@@ -87,6 +87,12 @@ def chat_with_tools_streaming(user_message: str, chat_history: List[Dict] = None
         
         # 도구 호출 확인
         if hasattr(response, 'tool_calls') and response.tool_calls:
+            from langchain_core.messages import ToolMessage
+            
+            # AI 응답 메시지 먼저 추가 (tool_calls 포함)
+            messages.append(response)
+            
+            # 모든 tool_call에 대해 실행하고 ToolMessage 추가
             for tool_call in response.tool_calls:
                 tool_name = tool_call['name']
                 tool_args = tool_call['args']
@@ -98,9 +104,7 @@ def chat_with_tools_streaming(user_message: str, chat_history: List[Dict] = None
                 else:
                     tool_result = "도구를 찾을 수 없습니다."
                 
-                # 도구 결과를 메시지에 추가
-                from langchain_core.messages import ToolMessage
-                messages.append(response)
+                # 각 도구 호출에 대한 ToolMessage 추가
                 messages.append(ToolMessage(content=tool_result, tool_call_id=tool_call['id']))
             
             # 최종 응답 생성 (스트리밍)

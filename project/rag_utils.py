@@ -41,23 +41,67 @@ def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 100) -> List[st
 
 def simple_retrieval(query: str, chunks: List[str], top_k: int = 3) -> List[str]:
     """
-    간단한 키워드 매칭 기반 검색 (임베딩 없이 구현)
-    실제 프로덕션에서는 Vector DB 사용 권장
+    개선된 키워드 매칭 기반 검색
+    - 한글/영어 형태소 고려
+    - 부분 매칭 지원
+    - 문장 유사도 계산
     """
+    if not chunks:
+        return []
+    
     scores = []
-    query_terms = query.split()
+    query_lower = query.lower()
+    
+    # 쿼리 토큰화 (공백, 조사 등 제거)
+    import re
+    # 한글, 영문, 숫자만 추출
+    query_terms = re.findall(r'[가-힣]+|[a-zA-Z]+|[0-9]+', query_lower)
     
     for chunk in chunks:
+        chunk_lower = chunk.lower()
         score = 0
+        
+        # 1. 정확한 쿼리 문자열 매칭 (높은 점수)
+        if query_lower in chunk_lower:
+            score += 10
+        
+        # 2. 각 토큰 매칭
         for term in query_terms:
-            if term.lower() in chunk.lower():
-                score += 1
+            if len(term) < 2:  # 너무 짧은 단어 무시
+                continue
+            if term in chunk_lower:
+                score += 3
+            # 부분 매칭 (긴 단어의 경우)
+            elif len(term) >= 3:
+                for i in range(len(chunk_lower) - len(term) + 1):
+                    if chunk_lower[i:i+len(term)] == term:
+                        score += 2
+                        break
+        
+        # 3. 문자 n-gram 유사도 (2-gram)
+        def get_ngrams(text, n=2):
+            return set(text[i:i+n] for i in range(len(text)-n+1))
+        
+        query_ngrams = get_ngrams(query_lower)
+        chunk_ngrams = get_ngrams(chunk_lower[:500])  # 청크 앞부분만
+        
+        if query_ngrams and chunk_ngrams:
+            overlap = len(query_ngrams & chunk_ngrams)
+            score += overlap * 0.1
+        
         scores.append((score, chunk))
     
     # 점수 내림차순 정렬
     scores.sort(key=lambda x: x[0], reverse=True)
     
-    return [chunk for score, chunk in scores[:top_k] if score > 0]
+    # 점수가 0보다 큰 것만 반환, 없으면 상위 청크 반환
+    result = [chunk for score, chunk in scores[:top_k] if score > 0]
+    
+    # 매칭되는 것이 없으면 상위 청크라도 반환
+    if not result and chunks:
+        result = [scores[0][1]] if scores else chunks[:top_k]
+    
+    return result
 
 
 class DocumentStore:
@@ -156,8 +200,13 @@ def answer_with_rag(query: str, document_store: DocumentStore, chat_history: Lis
     # 관련 문서 검색
     relevant_chunks = document_store.search(query, top_k=5)
     
+    # 검색 결과가 없으면 전체 문서 청크 사용 (Fallback)
     if not relevant_chunks:
-        return "📚 업로드된 문서에서 관련 내용을 찾을 수 없습니다. 다른 질문을 해보시거나 관련 문서를 업로드해주세요."
+        all_chunks = document_store.get_all_chunks()
+        if not all_chunks:
+            return "📚 업로드된 문서가 없습니다. 먼저 문서를 업로드해주세요."
+        # 전체 문서의 앞부분 청크들 사용
+        relevant_chunks = all_chunks[:5]
     
     # 컨텍스트 구성
     context = "\n\n---\n\n".join(relevant_chunks)
