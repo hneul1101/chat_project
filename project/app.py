@@ -288,7 +288,7 @@ def render_chat_page():
         st.session_state.tts_enabled = st.toggle("🔊 음성 출력 (TTS)", value=st.session_state.tts_enabled)
         
         if st.session_state.tts_enabled:
-            st.info("AI 응답을 음성으로 들을 수 있습니다. (1.5배속)")
+            st.info("AI 응답을 음성으로 들을 수 있습니다.")
         
         st.markdown("---")
         
