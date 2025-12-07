@@ -8,6 +8,7 @@ import feedparser
 from datetime import datetime, timedelta
 from typing import Dict, List
 import pandas as pd
+import json
 import config
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -369,8 +370,8 @@ def get_peer_analysis(ticker: str) -> List[Dict]:
 
 def get_sentiment_analysis(news_list: List[Dict]) -> Dict:
     """
-    뉴스 리스트에 대한 간단한 감성 분석을 수행합니다.
-    (실제로는 OpenAI API를 통해 더 정교한 분석 가능)
+    뉴스 리스트에 대한 감성 분석을 수행합니다.
+    OpenAI API를 사용하여 정교한 분석을 수행하며, 실패 시 키워드 기반 분석으로 대체합니다.
     
     Args:
         news_list: 뉴스 딕셔너리 리스트
@@ -378,18 +379,96 @@ def get_sentiment_analysis(news_list: List[Dict]) -> Dict:
     Returns:
         감성 분석 결과
     """
-    # 긍정/부정 키워드 기반 간단한 분석
-    positive_keywords = ["상승", "증가", "성장", "호재", "개선", "확대", "급등", "최고", "신고가"]
-    negative_keywords = ["하락", "감소", "악화", "악재", "하락세", "급락", "최저", "위기", "손실"]
+    # 뉴스 데이터 전처리
+    valid_news = [news for news in news_list if "error" not in news]
+    if not valid_news:
+        return {
+            "sentiment": "중립",
+            "score": 50,
+            "positive_count": 0,
+            "negative_count": 0,
+            "neutral_count": 0,
+            "total_analyzed": 0,
+            "reason": "분석할 뉴스가 없습니다."
+        }
+
+    # OpenAI API 사용 가능 여부 확인
+    if config.OPENAI_API_KEY and config.OPENAI_API_KEY != "your_openai_api_key_here":
+        try:
+            llm = ChatOpenAI(
+                model="gpt-5-mini-2025-08-07",
+                temperature=0,
+                api_key=config.OPENAI_API_KEY
+            )
+            
+            news_titles = [f"- {news.get('title', '')}" for news in valid_news[:20]] # 최대 20개만 분석
+            news_text = "\n".join(news_titles)
+            
+            prompt = f"""
+            다음은 특정 주식 종목과 관련된 최근 뉴스 헤드라인들입니다:
+            
+            {news_text}
+            
+            이 뉴스들을 바탕으로 시장의 감성을 분석해주세요.
+            다음 JSON 형식으로만 응답해주세요:
+            {{
+                "sentiment": "긍정적" 또는 "부정적" 또는 "중립",
+                "score": 0에서 100 사이의 점수 (0: 매우 부정, 50: 중립, 100: 매우 긍정),
+                "reason": "분석 이유 요약 (한 문장)"
+            }}
+            """
+            
+            response = llm.invoke(prompt)
+            content = response.content.strip()
+            
+            # JSON 파싱 시도
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+                
+            result = json.loads(content)
+            
+            # 기존 포맷과 호환성을 위해 count 필드 추가 (추정치)
+            score = result.get("score", 50)
+            total = len(valid_news)
+            
+            if score > 60:
+                pos = int(total * 0.7)
+                neg = int(total * 0.1)
+            elif score < 40:
+                pos = int(total * 0.1)
+                neg = int(total * 0.7)
+            else:
+                pos = int(total * 0.2)
+                neg = int(total * 0.2)
+                
+            neu = total - pos - neg
+            
+            return {
+                "sentiment": result.get("sentiment", "중립"),
+                "score": score,
+                "positive_count": pos,
+                "negative_count": neg,
+                "neutral_count": neu,
+                "total_analyzed": total,
+                "reason": result.get("reason", "")
+            }
+            
+        except Exception as e:
+            print(f"OpenAI 감성 분석 실패: {e}")
+            # 실패 시 아래 키워드 기반 분석으로 진행
+            pass
+
+    # 긍정/부정 키워드 기반 간단한 분석 (백업)
+    positive_keywords = ["상승", "증가", "성장", "호재", "개선", "확대", "급등", "최고", "신고가", "매수", "기대"]
+    negative_keywords = ["하락", "감소", "악화", "악재", "하락세", "급락", "최저", "위기", "손실", "매도", "우려"]
     
     positive_count = 0
     negative_count = 0
     neutral_count = 0
     
-    for news in news_list:
-        if "error" in news:
-            continue
-        
+    for news in valid_news:
         title = news.get("title", "")
         
         has_positive = any(keyword in title for keyword in positive_keywords)
@@ -408,7 +487,9 @@ def get_sentiment_analysis(news_list: List[Dict]) -> Dict:
         sentiment = "중립"
         score = 50
     else:
-        score = ((positive_count - negative_count) / total) * 100 + 50
+        # 점수 계산 로직 개선
+        sentiment_index = (positive_count - negative_count) / total # -1 ~ 1
+        score = (sentiment_index + 1) * 50 # 0 ~ 100
         
         if score > 60:
             sentiment = "긍정적"
@@ -478,6 +559,89 @@ def calculate_risk_score(stock_data: Dict, sentiment_data: Dict) -> Dict:
         "risk_factors": risk_factors,
         "color": color
     }
+
+
+def get_competitor_analysis(ticker: str, stock_name: str = "", max_competitors: int = 2) -> List[Dict]:
+    """
+    특정 종목의 경쟁사 데이터를 가져옵니다.
+    GPT를 사용하여 경쟁사를 식별하고, yfinance로 데이터를 가져옵니다.
+    
+    Args:
+        ticker: 기준 종목 코드
+        stock_name: 기준 종목명 (선택 사항, 없으면 yfinance로 조회)
+        max_competitors: 가져올 최대 경쟁사 수 (기본 2)
+        
+    Returns:
+        경쟁사 데이터 리스트
+    """
+    competitors_data = []
+    
+    # 1. 종목명 확인
+    if not stock_name:
+        try:
+            stock = yf.Ticker(ticker)
+            stock_name = stock.info.get("longName", stock.info.get("shortName", ticker))
+        except:
+            stock_name = ticker
+
+    # 2. GPT로 경쟁사 식별
+    if config.OPENAI_API_KEY:
+        try:
+            llm = ChatOpenAI(
+                model="gpt-5-mini-2025-08-07",
+                temperature=0,
+                api_key=config.OPENAI_API_KEY
+            )
+            
+            prompt = f"""
+            주식 종목 '{{stock_name}}' ({{ticker}})의 주요 경쟁사 {{max_competitors}}개를 알려주세요.
+            한국 주식이면 한국 경쟁사, 미국 주식이면 미국/글로벌 경쟁사를 추천해주세요.
+            
+            다음 JSON 형식으로만 응답해주세요:
+            {{{{
+                "competitors": [
+                    {{{{ "ticker": "종목코드1", "name": "경쟁사명1", "reason": "경쟁 이유" }}}},
+                    {{{{ "ticker": "종목코드2", "name": "경쟁사명2", "reason": "경쟁 이유" }}}}
+                ]
+            }}}}
+            
+            주의:
+            - 한국 주식 코드는 반드시 '.KS' 또는 '.KQ'를 포함해야 합니다 (예: 000660.KS).
+            - 미국 주식은 티커 심볼만 사용합니다 (예: AAPL).
+            - 정확한 티커를 제공해야 합니다.
+            """
+            
+            response = llm.invoke(prompt.format(stock_name=stock_name, ticker=ticker, max_competitors=max_competitors))
+            content = response.content.strip()
+            
+            # JSON 파싱
+            import json
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+                
+            result = json.loads(content)
+            competitors_list = result.get("competitors", [])
+            
+            # 3. 각 경쟁사 데이터 조회
+            for comp in competitors_list[:max_competitors]:
+                comp_ticker = comp.get("ticker")
+                comp_name = comp.get("name")
+                reason = comp.get("reason")
+                
+                # 주가 데이터 조회
+                summary = get_stock_summary(comp_ticker)
+                
+                if "error" not in summary:
+                    summary["reason"] = reason
+                    competitors_data.append(summary)
+                    
+        except Exception as e:
+            print(f"경쟁사 분석 실패: {{e}}")
+            pass
+            
+    return competitors_data
 
 
 def get_portfolio_analysis(portfolio: List[Dict]) -> Dict:
@@ -665,4 +829,55 @@ def analyze_stock_for_chat(ticker_or_name: str) -> str:
         
     except Exception as e:
         return f"❌ 분석 중 오류가 발생했습니다: {str(e)}"
+
+
+def analyze_competitors_for_chat(ticker_or_name: str) -> str:
+    """
+    채팅에서 경쟁사 분석을 요청할 때 사용하는 함수
+    
+    Args:
+        ticker_or_name: 종목 코드 또는 이름
+        
+    Returns:
+        경쟁사 분석 결과 텍스트
+    """
+    try:
+        # 종목 코드 정규화
+        normalized = normalize_ticker(ticker_or_name)
+        
+        if "error" in normalized:
+            return f"❌ {normalized['error']}"
+        
+        ticker = normalized['ticker']
+        name = normalized['name']
+        
+        # 경쟁사 데이터 가져오기
+        competitors = get_competitor_analysis(ticker, name, max_competitors=2)
+        
+        if not competitors:
+            return f"ℹ️ {name}의 경쟁사 정보를 찾을 수 없습니다."
+            
+        result = f"🏢 **{name}** 경쟁사 분석 (최대 2개)\n\n"
+        
+        for comp in competitors:
+            comp_name = comp.get('name', 'N/A')
+            comp_ticker = comp.get('ticker', 'N/A')
+            price = comp.get('current_price', 0)
+            change = comp.get('price_change_percent', 0)
+            reason = comp.get('reason', '')
+            
+            icon = "🔺" if change > 0 else "🔻" if change < 0 else "➖"
+            
+            # 통화 기호 처리 (간단하게)
+            currency = "₩" if ".KS" in comp_ticker or ".KQ" in comp_ticker else "$"
+            
+            result += f"**{comp_name}** ({comp_ticker})\n"
+            result += f"- 현재가: {currency}{price:,.2f}\n"
+            result += f"- 등락률: {icon} {change:+.2f}%\n"
+            result += f"- 경쟁 이유: {reason}\n\n"
+            
+        return result
+        
+    except Exception as e:
+        return f"❌ 경쟁사 분석 중 오류 발생: {str(e)}"
 

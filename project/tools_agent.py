@@ -4,7 +4,7 @@ AI가 자동으로 실시간 데이터 도구를 사용할 수 있도록 하는 
 """
 from typing import Dict, List, Generator
 import config
-from tools import analyze_stock_for_chat, get_stock_news, get_stock_summary
+from tools import analyze_stock_for_chat, get_stock_news, get_stock_summary, analyze_competitors_for_chat
 
 
 def chat_with_tools_streaming(user_message: str, chat_history: List[Dict] = None, user_profile: str = "moderate") -> tuple:
@@ -44,13 +44,29 @@ def chat_with_tools_streaming(user_message: str, chat_history: List[Dict] = None
                         "required": ["ticker_or_name"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_competitor_analysis",
+                    "description": "특정 종목의 경쟁사 정보를 조회합니다. 사용자가 경쟁사나 비교 분석을 요청할 때 사용하세요.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "ticker_or_name": {
+                                "type": "string",
+                                "description": "종목명 또는 종목 코드"
+                            }
+                        },
+                        "required": ["ticker_or_name"]
+                    }
+                }
             }
         ]
         
         # LLM 초기화
         llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0.7,
+            model="gpt-5-mini-2025-08-07",
             api_key=config.OPENAI_API_KEY
         )
         
@@ -101,6 +117,8 @@ def chat_with_tools_streaming(user_message: str, chat_history: List[Dict] = None
                 # 도구 실행
                 if tool_name == "get_stock_analysis":
                     tool_result = analyze_stock_for_chat(tool_args['ticker_or_name'])
+                elif tool_name == "get_competitor_analysis":
+                    tool_result = analyze_competitors_for_chat(tool_args['ticker_or_name'])
                 else:
                     tool_result = "도구를 찾을 수 없습니다."
                 

@@ -217,7 +217,7 @@ def answer_with_rag(query: str, document_store: DocumentStore, chat_history: Lis
         from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
         
         llm = ChatOpenAI(
-            model="gpt-4o-mini",
+            model="gpt-5-nano-2025-08-07",
             temperature=0.3,
             api_key=config.OPENAI_API_KEY
         )
@@ -283,8 +283,7 @@ def summarize_document(document_store: DocumentStore, filename: str = None) -> s
         from langchain_core.prompts import ChatPromptTemplate
         
         llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0.3,
+            model="gpt-5-mini-2025-08-07",
             api_key=config.OPENAI_API_KEY
         )
         
