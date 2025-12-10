@@ -25,6 +25,7 @@ project/
 ├── requirements.txt        # 📦 의존성 패키지 목록
 ├── test_pdf.py             # 🧪 PDF 기능 테스트
 ├── test_setup.py           # 🧪 환경 설정 테스트
+├── 내가 가지고 있는 주식.txt # RAG 기능 테스트용 간단한 포트폴리오
 │
 ├── .env                    # 🔑 환경 변수 (API 키) - gitignore 대상
 ├── finsearcher.db          # 💾 SQLite 데이터베이스 파일 (자동 생성)
@@ -414,6 +415,7 @@ streamlit run app.py
 본 서비스는 **투자 참고용**이며, 실제 투자 결정은 사용자 본인의 책임입니다. AI가 제공하는 분석 및 조언은 참고 자료일 뿐, 투자 손실에 대한 책임을 지지 않습니다.
 
 ---
+
 
 
 
