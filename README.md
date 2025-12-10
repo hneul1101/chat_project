@@ -30,7 +30,7 @@ project/
 ├── .env                    # 🔑 환경 변수 (API 키) - gitignore 대상
 ├── finsearcher.db          # 💾 SQLite 데이터베이스 파일 (자동 생성)
 │
-└── __pycache__/            # 🐍 Python 캐시 디렉토리
+└── __pycache__/            # 🐍 Python 캐시 디렉토리 (자동 생성)
 ```
 
 ---
@@ -415,6 +415,7 @@ streamlit run app.py
 본 서비스는 **투자 참고용**이며, 실제 투자 결정은 사용자 본인의 책임입니다. AI가 제공하는 분석 및 조언은 참고 자료일 뿐, 투자 손실에 대한 책임을 지지 않습니다.
 
 ---
+
 
 
 
