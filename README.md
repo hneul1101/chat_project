@@ -382,39 +382,12 @@ streamlit run app.py
 
 ---
 
-## ✅ 평가 기준 충족 현황
-
-### Ⅱ. 구현 및 기술성 (50점)
-
-| 평가 항목 | 배점 | 충족 여부 | 구현 내용 |
-|-----------|------|----------|----------|
-| **LangChain & LangGraph 사용** | 5점 | ✅ 충족 | `workflow.py`에서 LangGraph 워크플로우 구현, `tools.py`에서 LangChain 활용 |
-| **RAG & 인터넷 검색** | 5점 | ✅ 충족 | `rag_utils.py`에서 RAG 구현, Google News RSS로 인터넷 검색 |
-| **자체 Tools 2개 이상** | 5점 | ✅ 충족 | `get_stock_analysis`, `get_stock_news`, `normalize_ticker`, `get_technical_indicators` 등 다수 구현 |
-| **기술 통합 및 자동화** | 10점 | ✅ 충족 | 검색→요약→분류→음성 기능이 자연스럽게 연결됨 |
-| **UI/UX 완성도** | 10점 | ✅ 충족 | Streamlit GUI, 아이콘/이모지 활용, 직관적인 탭 구조 |
-| **데이터/사용자 중심성** | 10점 | ✅ 충족 | 투자 성향별 맞춤 조언, 사용자 입력에 따른 동적 응답 |
-| **창의성 및 확장성** | 5점 | ✅ 충족 | 음성 기능, RAG 모듈, PDF 내보내기 등 자체 모듈 추가 |
-
-### 구현된 핵심 기술 요소
-
-```
-✅ LangChain - LLM 통합 및 프롬프트 관리
-✅ LangGraph - 워크플로우 기반 분석 파이프라인
-✅ RAG - 문서 업로드, 청킹, 검색, QA
-✅ 인터넷 검색 - Google News RSS 실시간 크롤링
-✅ Function Calling - AI 에이전트 자동 도구 선택
-✅ TTS - 음성 출력 기능
-✅ GUI - Streamlit 기반 웹 인터페이스
-```
-
----
-
 ## ⚠️ 면책 조항
 
 본 서비스는 **투자 참고용**이며, 실제 투자 결정은 사용자 본인의 책임입니다. AI가 제공하는 분석 및 조언은 참고 자료일 뿐, 투자 손실에 대한 책임을 지지 않습니다.
 
 ---
+
 
 
 
